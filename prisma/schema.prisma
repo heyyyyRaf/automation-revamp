@@ -1,0 +1,677 @@
+// Traxion QA — database schema (Prisma 7, PostgreSQL)
+//
+// Conventions
+// - IDs are cuid strings; all timestamps are UTC.
+// - Every project-owned table carries `projectId` (directly or through a parent that
+//   does) so every query can be scoped to a project the caller is a member of.
+// - Human-readable keys (REQ-001, TC-001) are unique per project, not globally.
+// - Large binary artifacts (files, screenshots, traces, storage states) live in S3/MinIO;
+//   the database only stores random object keys.
+// - Secrets (test-account credentials) are stored as AES-256-GCM envelopes:
+//   "v<keyVersion>:<iv b64>:<authTag b64>:<ciphertext b64>". Never plaintext.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1 — Auth, projects, uploads, jobs, audit, AI usage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Single global role.
+/// ADMIN (Admin / QA Lead): manage users, projects, members, target-URL allowlist; sees all projects.
+/// QA_TESTER: upload, generate, review/approve, run, export — in projects they are a member of.
+/// VIEWER: read-only — in projects they are a member of.
+enum Role {
+  ADMIN
+  QA_TESTER
+  VIEWER
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique // stored lower-cased
+  name         String
+  passwordHash String // argon2id
+  role         Role      @default(VIEWER)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions    Session[]
+  memberships ProjectMember[]
+  auditLogs   AuditLog[]
+
+  projectsCreated   Project[]       @relation("ProjectCreatedBy")
+  documentsUploaded Document[]      @relation("DocumentUploadedBy")
+  testCasesReviewed TestCase[]      @relation("TestCaseReviewedBy")
+  scriptVersions    ScriptVersion[] @relation("ScriptVersionCreatedBy")
+  scriptsApproved   Script[]        @relation("ScriptApprovedBy")
+  runsTriggered     Run[]           @relation("RunTriggeredBy")
+  targetsRequested  AllowedTarget[] @relation("AllowedTargetRequestedBy")
+  targetsDecided    AllowedTarget[] @relation("AllowedTargetDecidedBy")
+  exportsCreated    Export[]        @relation("ExportCreatedBy")
+  questionsAnswered OpenQuestion[]  @relation("QuestionAnsweredBy")
+}
+
+/// Server-side session. The cookie holds a random token; only its SHA-256 is stored.
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  csrfSecret String
+  ipAddress  String?
+  userAgent  String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(ACTIVE)
+  createdById String
+  archivedAt  DateTime?
+
+  /// Monthly AI token cap (input + output). Null = use the global default from env.
+  monthlyTokenCap Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdBy User @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+
+  members        ProjectMember[]
+  documents      Document[]
+  jobs           Job[]
+  auditLogs      AuditLog[]
+  aiUsage        AiUsage[]
+  requirements   Requirement[]
+  userFlows      UserFlow[]
+  openQuestions  OpenQuestion[]
+  testCases      TestCase[]
+  allowedTargets AllowedTarget[]
+  environments   Environment[]
+  scripts        Script[]
+  runs           Run[]
+  exports        Export[]
+
+  @@index([status])
+}
+
+/// Grants a non-admin user access to a project. What they can do is decided by User.role.
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+enum DocumentCategory {
+  REQUIREMENTS // PDF, DOCX, MD, TXT, CSV
+  SYSTEM_FLOW // PNG, JPG, PDF
+  FIGMA // link or PNG/JPG frames
+}
+
+enum DocumentSource {
+  FILE
+  LINK // Figma URL
+}
+
+enum ExtractionStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  NOT_APPLICABLE // e.g. images kept for vision, links
+}
+
+model Document {
+  id           String           @id @default(cuid())
+  projectId    String
+  category     DocumentCategory
+  source       DocumentSource
+  originalName String // display only; sanitized, never used as a path
+  mimeType     String? // detected from magic bytes, not the client
+  sizeBytes    Int?
+  storageKey   String?          @unique // random object key in S3
+  sha256       String?
+  linkUrl      String? // Figma link when source = LINK
+
+  extractionStatus ExtractionStatus @default(PENDING)
+  extractedText    String?          @db.Text
+  pageCount        Int?
+  ocrUsed          Boolean          @default(false)
+  extractionError  String? // user-safe message
+
+  uploadedById String
+  deletedAt    DateTime? // soft delete keeps traceability links intact
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy   User          @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
+  requirements Requirement[]
+
+  @@index([projectId, category])
+  @@index([projectId, sha256])
+}
+
+enum JobType {
+  EXTRACT_TEXT
+  ANALYZE_REQUIREMENTS
+  GENERATE_TEST_CASES
+  VERIFY_LOGIN
+  CAPTURE_DOM
+  GENERATE_SCRIPT
+  FIX_SCRIPT
+  EXECUTE_RUN
+  ANALYZE_FAILURES
+  EXPORT
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED // final, after all retries; shown to the user
+  CANCELLED
+}
+
+/// Mirror of BullMQ jobs so the UI can show progress and final state even if Redis is flushed.
+model Job {
+  id          String    @id @default(cuid())
+  projectId   String
+  type        JobType
+  status      JobStatus @default(QUEUED)
+  queueJobId  String?   @unique // BullMQ job id
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  progress    Int       @default(0) // 0–100
+  payload     Json? // never contains secrets
+  result      Json?
+  error       String? // user-safe message
+  createdById String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  timeoutAt   DateTime? // hard deadline; a reaper marks overdue jobs FAILED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  aiUsage AiUsage[]
+
+  @@index([projectId, type, createdAt])
+  @@index([status, timeoutAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  projectId  String? // null for system-level events (login, user admin)
+  actorId    String? // null for system actions
+  action     String // e.g. "testcase.approve", "run.start", "export.create"
+  entityType String
+  entityId   String?
+  metadata   Json? // redacted; never contains secrets
+  ipAddress  String?
+  requestId  String?
+  createdAt  DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  actor   User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+}
+
+/// One row per AI call — used for the per-project monthly token cap.
+model AiUsage {
+  id           String   @id @default(cuid())
+  projectId    String
+  jobId        String?
+  provider     String
+  model        String
+  purpose      JobType
+  inputTokens  Int
+  outputTokens Int
+  createdAt    DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  job     Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2 — Requirements, questions, test cases, exports
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum RequirementType {
+  FUNCTIONAL
+  NON_FUNCTIONAL
+  BUSINESS_RULE
+  UI
+  DATA
+  SECURITY
+  OTHER
+}
+
+enum Origin {
+  AI
+  MANUAL
+}
+
+model Requirement {
+  id               String          @id @default(cuid())
+  projectId        String
+  key              String // REQ-001
+  text             String          @db.Text
+  type             RequirementType
+  origin           Origin
+  sourceDocumentId String?
+  sourceSection    String?
+  deletedAt        DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  project        Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceDocument Document?             @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  testCases      TestCaseRequirement[]
+  questions      OpenQuestion[]
+
+  @@unique([projectId, key])
+  @@index([projectId])
+}
+
+model UserFlow {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  description String?  @db.Text
+  steps       Json // string[]
+  origin      Origin
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+enum QuestionStatus {
+  OPEN
+  ANSWERED
+  DISMISSED
+}
+
+model OpenQuestion {
+  id            String         @id @default(cuid())
+  projectId     String
+  requirementId String?
+  question      String         @db.Text
+  answer        String?        @db.Text
+  status        QuestionStatus @default(OPEN)
+  origin        Origin
+  answeredById  String?
+  answeredAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirement Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  answeredBy  User?        @relation("QuestionAnsweredBy", fields: [answeredById], references: [id])
+
+  @@index([projectId, status])
+}
+
+enum TestCaseType {
+  POSITIVE
+  NEGATIVE
+  BOUNDARY
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ReviewStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+}
+
+model TestCase {
+  id                String       @id @default(cuid())
+  projectId         String
+  key               String // TC-001
+  title             String
+  preconditions     String?      @db.Text
+  steps             Json // { action: string; expected?: string }[]
+  testData          Json? // non-secret sample data only
+  expectedResult    String       @db.Text
+  type              TestCaseType
+  priority          Priority
+  automatable       Boolean
+  automatableReason String?
+  origin            Origin
+  status            ReviewStatus @default(DRAFT)
+  reviewedById      String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  deletedAt         DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewedBy   User?                 @relation("TestCaseReviewedBy", fields: [reviewedById], references: [id])
+  requirements TestCaseRequirement[]
+  script       Script?
+  runTests     RunTest[]
+
+  @@unique([projectId, key])
+  @@index([projectId, status])
+}
+
+model TestCaseRequirement {
+  testCaseId    String
+  requirementId String
+
+  testCase    TestCase    @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@id([testCaseId, requirementId])
+  @@index([requirementId])
+}
+
+enum ExportKind {
+  TEST_SCOPE
+  RUN_REPORT
+  SCRIPTS_ZIP
+}
+
+enum ExportFormat {
+  PDF
+  XLSX
+  DOCX
+  HTML
+  ZIP
+}
+
+model Export {
+  id          String       @id @default(cuid())
+  projectId   String
+  kind        ExportKind
+  format      ExportFormat
+  runId       String? // for RUN_REPORT
+  storageKey  String?      @unique
+  status      JobStatus    @default(QUEUED)
+  createdById String
+  createdAt   DateTime     @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  run       Run?    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("ExportCreatedBy", fields: [createdById], references: [id])
+
+  @@index([projectId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 — URL allowlist, environments, scripts, runs
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REVOKED
+}
+
+/// Origins a project may target. Only a system ADMIN can approve.
+model AllowedTarget {
+  id                  String         @id @default(cuid())
+  projectId           String
+  origin              String // normalized "https://app.example.com" (scheme + host + port)
+  allowPrivateNetwork Boolean        @default(false) // permit RFC1918/loopback resolution
+  status              ApprovalStatus @default(PENDING)
+  requestedById       String
+  decidedById         String?
+  decidedAt           DateTime?
+  note                String?
+  createdAt           DateTime       @default(now())
+
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User    @relation("AllowedTargetRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User?   @relation("AllowedTargetDecidedBy", fields: [decidedById], references: [id])
+
+  @@unique([projectId, origin])
+}
+
+enum LoginCheckStatus {
+  NOT_CHECKED
+  OK
+  FAILED
+}
+
+model Environment {
+  id        String @id @default(cuid())
+  projectId String
+  name      String // "Staging", "UAT"
+  baseUrl   String // must match an APPROVED AllowedTarget origin
+  variables Json? // non-secret key/values
+
+  loginCheckStatus LoginCheckStatus @default(NOT_CHECKED)
+  loginCheckedAt   DateTime?
+  loginCheckError  String?
+  /// Encrypted Playwright storageState in S3 (AES-256-GCM before upload).
+  storageStateKey  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  accounts     TestAccount[]
+  domSnapshots DomSnapshot[]
+  runs         Run[]
+
+  @@unique([projectId, name])
+}
+
+model TestAccount {
+  id                String   @id @default(cuid())
+  environmentId     String
+  label             String // "Standard user", "Admin user" — what scripts reference
+  usernameEncrypted String
+  passwordEncrypted String
+  usernameHint      String // masked display, e.g. "j***@acme.com"
+  isDefault         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  @@unique([environmentId, label])
+}
+
+model DomSnapshot {
+  id            String   @id @default(cuid())
+  environmentId String
+  url           String
+  storageKey    String   @unique // accessibility tree + trimmed DOM JSON
+  capturedAt    DateTime @default(now())
+
+  environment Environment     @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  versions    ScriptVersion[]
+
+  @@index([environmentId, url])
+}
+
+/// One script per test case. Runs only use `approvedVersion`, and only if the test case is APPROVED.
+model Script {
+  id                String       @id @default(cuid())
+  projectId         String
+  testCaseId        String       @unique
+  status            ReviewStatus @default(DRAFT)
+  approvedVersionId String?      @unique
+  approvedById      String?
+  approvedAt        DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testCase        TestCase        @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  approvedBy      User?           @relation("ScriptApprovedBy", fields: [approvedById], references: [id])
+  approvedVersion ScriptVersion?  @relation("ApprovedVersion", fields: [approvedVersionId], references: [id])
+  versions        ScriptVersion[] @relation("ScriptVersions")
+
+  @@index([projectId, status])
+}
+
+enum ScriptSource {
+  AI_GENERATED
+  MANUAL_EDIT
+  AI_FIX
+}
+
+/// Immutable. Editing a script creates a new version.
+model ScriptVersion {
+  id            String       @id @default(cuid())
+  scriptId      String
+  version       Int
+  code          String       @db.Text
+  source        ScriptSource
+  domSnapshotId String?
+
+  typeCheckOk   Boolean
+  typeCheckLog  Json? // diagnostics
+  safetyCheckOk Boolean
+  safetyIssues  Json? // blocked imports/calls found by the static check
+  selectorCheck Json? // per-selector: { selector, found: boolean }
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  script      Script       @relation("ScriptVersions", fields: [scriptId], references: [id], onDelete: Cascade)
+  approvedFor Script?      @relation("ApprovedVersion")
+  domSnapshot DomSnapshot? @relation(fields: [domSnapshotId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("ScriptVersionCreatedBy", fields: [createdById], references: [id])
+  runTests    RunTest[]
+
+  @@unique([scriptId, version])
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  PASSED
+  FAILED // at least one test failed
+  ERROR // infrastructure error
+  CANCELLED
+}
+
+enum TestResultStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+  ERROR
+  SKIPPED
+}
+
+model Run {
+  id            String    @id @default(cuid())
+  projectId     String
+  environmentId String
+  status        RunStatus @default(QUEUED)
+  triggeredById String
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  passedCount   Int       @default(0)
+  failedCount   Int       @default(0)
+  errorCount    Int       @default(0)
+  skippedCount  Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environment Environment @relation(fields: [environmentId], references: [id])
+  triggeredBy User        @relation("RunTriggeredBy", fields: [triggeredById], references: [id])
+  tests       RunTest[]
+  exports     Export[]
+
+  @@index([projectId, createdAt])
+}
+
+enum FailureCause {
+  APP_BUG
+  SCRIPT_ISSUE
+  ENVIRONMENT
+  UNKNOWN
+}
+
+model RunTest {
+  id              String           @id @default(cuid())
+  runId           String
+  testCaseId      String
+  scriptVersionId String // pinned: exactly the code that was approved and executed
+  status          TestResultStatus @default(PENDING)
+  startedAt       DateTime?
+  durationMs      Int?
+  errorMessage    String?          @db.Text
+  traceKey        String?
+  logKey          String?
+  screenshotKey   String? // final/failure screenshot
+
+  // Phase 4 — AI failure analysis
+  likelyCause      FailureCause?
+  causeExplanation String?       @db.Text
+
+  run           Run           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  testCase      TestCase      @relation(fields: [testCaseId], references: [id])
+  scriptVersion ScriptVersion @relation(fields: [scriptVersionId], references: [id])
+  steps         RunStep[]
+
+  @@unique([runId, testCaseId])
+}
+
+model RunStep {
+  id            String           @id @default(cuid())
+  runTestId     String
+  index         Int
+  title         String
+  action        String? // "click", "fill", "expect"...
+  status        TestResultStatus
+  startedAt     DateTime
+  durationMs    Int?
+  screenshotKey String?
+  error         String?          @db.Text
+
+  runTest RunTest @relation(fields: [runTestId], references: [id], onDelete: Cascade)
+
+  @@unique([runTestId, index])
+}

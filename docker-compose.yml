@@ -1,0 +1,132 @@
+# Local development stack. Values come from .env (copy .env.example).
+# Infrastructure ports are bound to 127.0.0.1 only.
+name: traxion-qa
+
+x-app-env: &app-env
+  NODE_ENV: production
+  APP_URL: ${APP_URL:-http://localhost:3000}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+  S3_ENDPOINT: http://seaweedfs:8333
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+  S3_BUCKET: ${S3_BUCKET:-traxion-qa}
+  S3_FORCE_PATH_STYLE: "true"
+  SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+  OCR_MAX_PAGES: ${OCR_MAX_PAGES:-30}
+  JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-300}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
+
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  tmpfs: ["/tmp"]
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:8.6.7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redisdata:/data]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # S3-compatible object storage (SeaweedFS). Credentials come from .env; the bucket is private.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        printf '{"identities":[{"name":"app","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+        "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -ip=seaweedfs -ip.bind=0.0.0.0 -s3 -s3.port=8333 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=1024 -volume.max=0
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+    ports: ["127.0.0.1:8333:8333"]
+    volumes: [s3data:/data]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # Creates the bucket once.
+  storage-init:
+    image: chrislusf/seaweedfs:4.48
+    depends_on:
+      seaweedfs: { condition: service_healthy }
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-traxion-qa}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - echo "s3.bucket.create -name $$S3_BUCKET" | weed shell -master=seaweedfs:9333 2>&1 | grep -v "already exists" || true
+    networks: [backend]
+
+  # One-off: apply database migrations before app/worker start.
+  migrate:
+    build: { context: ., target: worker }
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+
+  app:
+    build: { context: ., target: app }
+    <<: *hardening
+    environment: *app-env
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      storage-init: { condition: service_completed_successfully }
+    networks: [backend]
+    mem_limit: 1g
+
+  worker:
+    build: { context: ., target: worker }
+    <<: *hardening
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      storage-init: { condition: service_completed_successfully }
+    networks: [backend]
+    mem_limit: 2g
+    cpus: 2
+
+networks:
+  backend: {}
+  # Phase 3 adds an isolated `sandbox` network for test-runner containers (no route to backend).
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+  s3data: {}
