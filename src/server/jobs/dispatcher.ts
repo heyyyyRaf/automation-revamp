@@ -2,10 +2,16 @@ import { Queue } from "bullmq";
 import type { JobType } from "@/generated/prisma/client";
 import { createRedis } from "@/server/queue/connection";
 
-/** Phase 1 has one queue; AI and run queues are added in later phases. */
+/** Queues separate fast document work, slow AI calls and exports so one can't starve another. */
 export const QUEUE_FOR_TYPE: Partial<Record<JobType, string>> = {
   EXTRACT_TEXT: "documents",
+  IMPORT_FIGMA: "documents",
+  ANALYZE_REQUIREMENTS: "ai",
+  GENERATE_TEST_CASES: "ai",
+  EXPORT: "exports",
 };
+
+export const QUEUES = ["documents", "ai", "exports"] as const;
 
 export interface DispatchRequest {
   jobId: string;

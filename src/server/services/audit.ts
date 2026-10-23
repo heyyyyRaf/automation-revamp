@@ -16,7 +16,29 @@ export type AuditAction =
   | "member.add"
   | "member.remove"
   | "document.upload"
-  | "document.delete";
+  | "document.delete"
+  | "ai.analyze_requested"
+  | "ai.analyze"
+  | "ai.generate_requested"
+  | "ai.generate_test_cases"
+  | "requirement.create"
+  | "requirement.update"
+  | "requirement.delete"
+  | "flow.create"
+  | "flow.update"
+  | "flow.delete"
+  | "question.create"
+  | "question.answer"
+  | "question.update"
+  | "testcase.create"
+  | "testcase.update"
+  | "testcase.delete"
+  | "testcase.approve"
+  | "testcase.reject"
+  | "testcase.reopen"
+  | "project.ai_budget"
+  | "export.create"
+  | "export.download";
 
 export interface AuditEntry {
   action: AuditAction;

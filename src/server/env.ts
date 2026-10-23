@@ -27,6 +27,23 @@ const envSchema = z.object({
   OCR_MAX_PAGES: z.coerce.number().int().min(1).max(200).default(30),
   /** Hard timeout for one background job, in seconds. */
   JOB_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(3600).default(300),
+
+  /** AI provider. "fake" is an offline, deterministic provider for tests and demos. */
+  AI_PROVIDER: z.enum(["openai", "fake"]).default("openai"),
+  /** Server-side only. Never sent to the browser or logged. */
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_MODEL: z.string().min(1).optional(),
+  /** Optional OpenAI-compatible endpoint (e.g. a company gateway). */
+  OPENAI_BASE_URL: z.url().optional(),
+  /** Default monthly token cap per project (input + output); projects can override. */
+  AI_MONTHLY_TOKEN_CAP: z.coerce.number().int().min(1000).default(2_000_000),
+  /** Max diagram / design images sent to the AI per analysis. */
+  AI_MAX_IMAGES: z.coerce.number().int().min(0).max(50).default(12),
+  /** Hard timeout for AI jobs (analysis, generation), in seconds. */
+  AI_JOB_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(7200).default(1200),
+
+  /** Server-side only. Personal access token used to export frames from Figma links. */
+  FIGMA_ACCESS_TOKEN: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -39,7 +56,9 @@ let cached: Env | undefined;
  */
 export function getEnv(): Env {
   if (cached) return cached;
-  const parsed = envSchema.safeParse(process.env);
+  // Docker Compose passes unset optional variables as "": treat those as not set.
+  const raw = Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== ""));
+  const parsed = envSchema.safeParse(raw);
   if (!parsed.success) {
     const names = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
     throw new Error(`Invalid or missing environment variables: ${names}`);

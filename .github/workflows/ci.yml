@@ -87,6 +87,8 @@ jobs:
         run: |
           cp .env.example .env
           sed -i "s/change-me-local-db-password/ci-db-$RANDOM$RANDOM/g; s/change-me-local-redis-password/ci-redis-$RANDOM$RANDOM/g; s/change-me-s3-access-key/ciaccess$RANDOM/; s/change-me-s3-secret-key/cisecret$RANDOM$RANDOM/; s/change-me-strong-admin-password/ci-admin-pass-$RANDOM$RANDOM/" .env
+          # End-to-end runs use the offline, deterministic AI provider (no API key in CI).
+          sed -i "s/^AI_PROVIDER=openai/AI_PROVIDER=fake/; s/^OPENAI_API_KEY=.*/OPENAI_API_KEY=/; s/^FIGMA_ACCESS_TOKEN=.*/FIGMA_ACCESS_TOKEN=/" .env
       - name: Start stack
         run: docker compose up -d --build --wait app worker
       - name: Seed admin

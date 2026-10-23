@@ -1,5 +1,5 @@
 /**
- * Phase 1 main flow: sign in → create project → upload a requirements file →
+ * Main flows: sign in → create project → upload a requirements file →
  * the worker extracts its text → read the text. Also checks security headers on a real page.
  */
 import { expect, test } from "@playwright/test";
@@ -37,6 +37,55 @@ test("upload a requirements document and read its extracted text", async ({ page
 
   await page.getByRole("link", { name: "View text" }).click();
   await expect(page.getByText(requirement)).toBeVisible();
+});
+
+/**
+ * Phase 2 flow. CI runs the stack with AI_PROVIDER=fake (offline, deterministic), so this
+ * checks the product flow and UI — not model quality.
+ */
+test("analyze → generate → approve → export the test scope", async ({ page }, info) => {
+  test.setTimeout(180_000);
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("heading", { name: "Projects" }).waitFor();
+
+  const name = `E2E AI ${info.project.name} ${Date.now()}`;
+  await page.getByRole("button", { name: "New project" }).first().click();
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+
+  await page.locator("#upload-REQUIREMENTS").setInputFiles({
+    name: "frd.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "The cart shall show the total including VAT.\nThe user must accept the terms before paying.",
+    ),
+  });
+  await expect(page.getByText("Text ready")).toBeVisible({ timeout: 60_000 });
+
+  await page.getByRole("button", { name: "Analyze requirements" }).click();
+  await expect(page.getByText(/Done: 2 new requirements/)).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("link", { name: "Review requirements" }).click();
+  await expect(page.getByText("The cart shall show the total including VAT.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Generate test cases" }).click();
+  await expect(page.getByText(/Done: 4 new draft test cases/)).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("link", { name: "Review test cases" }).click();
+
+  await page.getByRole("button", { name: "Approve TC-001" }).click();
+  await expect(page.getByText("1 test case approved.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Approved \(1\)/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "PDF" }).click();
+  await expect(page.getByRole("link", { name: "Download" }).first()).toBeVisible({
+    timeout: 60_000,
+  });
+  const download = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download" }).first().click();
+  expect((await download).suggestedFilename()).toMatch(/Test scope .*\.pdf$/);
 });
 
 test("rejects a spoofed file with a plain-language message", async ({ page }) => {

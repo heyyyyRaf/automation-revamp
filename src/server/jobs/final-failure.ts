@@ -6,12 +6,23 @@ import { logger } from "@/server/logger";
 export async function onFinalFailure(job: Job, message: string): Promise<void> {
   try {
     switch (job.type) {
-      case "EXTRACT_TEXT": {
+      case "EXTRACT_TEXT":
+      case "IMPORT_FIGMA": {
         const documentId = payloadString(job, "documentId");
         if (documentId) {
           await db.document.updateMany({
             where: { id: documentId, projectId: job.projectId },
             data: { extractionStatus: "FAILED", extractionError: message },
+          });
+        }
+        break;
+      }
+      case "EXPORT": {
+        const exportId = payloadString(job, "exportId");
+        if (exportId) {
+          await db.export.updateMany({
+            where: { id: exportId, projectId: job.projectId },
+            data: { status: "FAILED", error: message },
           });
         }
         break;

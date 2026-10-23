@@ -25,6 +25,8 @@ export const REDACT_PATHS = [
   "headers.cookie",
   "headers.authorization",
   'headers["x-csrf-token"]',
+  'headers["x-figma-token"]',
+  'headers["X-Figma-Token"]',
   "username",
   "*.username",
   "storageState",

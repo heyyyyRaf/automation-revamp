@@ -34,6 +34,11 @@ describe("permissions matrix", () => {
     "projects:edit",
     "documents:read",
     "documents:write",
+    "requirements:write",
+    "testcases:write",
+    "testcases:review",
+    "ai:run",
+    "exports:create",
     "targets:approve",
   ];
 
@@ -54,9 +59,17 @@ describe("permissions matrix", () => {
     }
   });
 
-  it("Viewer is read-only", () => {
+  it("Viewer is read-only (exporting the scope only reads data)", () => {
     const allowed = all.filter((p) => can("VIEWER", p));
-    expect(allowed.every((p) => p.endsWith(":read"))).toBe(true);
+    expect(allowed.every((p) => p.endsWith(":read") || p === "exports:create")).toBe(true);
+    for (const p of [
+      "requirements:write",
+      "testcases:write",
+      "testcases:review",
+      "ai:run",
+    ] as const) {
+      expect(can("VIEWER", p)).toBe(false);
+    }
   });
 
   it("covers exactly the three roles", () => {

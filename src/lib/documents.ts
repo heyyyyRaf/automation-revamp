@@ -16,6 +16,7 @@ export interface DocumentItem {
   extractionError: string | null;
   pageCount: number | null;
   ocrUsed: boolean;
+  derivedFromId: string | null;
   createdAt: string | Date;
   uploadedBy: { id: string; name: string };
 }

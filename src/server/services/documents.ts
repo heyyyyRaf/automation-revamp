@@ -31,6 +31,7 @@ export const DOCUMENT_LIST_SELECT = {
   extractionError: true,
   pageCount: true,
   ocrUsed: true,
+  derivedFromId: true,
   createdAt: true,
   uploadedBy: { select: { id: true, name: true } },
 } satisfies Prisma.DocumentSelect;
@@ -133,7 +134,8 @@ export async function addFigmaLink(
         source: "LINK",
         originalName: sanitizeDisplayName(input.name || "Figma design"),
         linkUrl: input.url,
-        extractionStatus: "NOT_APPLICABLE",
+        // The worker exports the link's frames as images (IMPORT_FIGMA).
+        extractionStatus: "PENDING",
         uploadedById: auth.user.id,
       },
     });
@@ -151,6 +153,12 @@ export async function addFigmaLink(
       tx,
     );
     return created;
+  });
+  await enqueueJob({
+    projectId,
+    type: "IMPORT_FIGMA",
+    payload: { documentId: doc.id },
+    createdById: auth.user.id,
   });
   return getListItem(projectId, doc.id);
 }
@@ -191,7 +199,13 @@ export async function deleteDocument(
   await requireProjectAccess(auth, projectId, "documents:write");
   const doc = await findDoc(projectId, documentId);
   await db.$transaction(async (tx) => {
-    await tx.document.update({ where: { id: doc.id }, data: { deletedAt: new Date() } });
+    const now = new Date();
+    await tx.document.update({ where: { id: doc.id }, data: { deletedAt: now } });
+    // Frames imported from a Figma link go with it.
+    await tx.document.updateMany({
+      where: { derivedFromId: doc.id, projectId, deletedAt: null },
+      data: { deletedAt: now },
+    });
     await audit(
       {
         action: "document.delete",
@@ -224,7 +238,7 @@ export async function retryExtraction(
   });
   await enqueueJob({
     projectId,
-    type: "EXTRACT_TEXT",
+    type: doc.source === "LINK" ? "IMPORT_FIGMA" : "EXTRACT_TEXT",
     payload: { documentId: doc.id },
     createdById: auth.user.id,
   });

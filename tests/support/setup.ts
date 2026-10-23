@@ -20,6 +20,9 @@ const { setStorage, MemoryStorage } = await import("@/server/storage/storage");
 const { setDispatcher, RecordingDispatcher } = await import("@/server/jobs/dispatcher");
 const { useInMemoryLoginLimiters } = await import("@/server/auth/rate-limit");
 const { db } = await import("@/server/db");
+const { setAIProvider } = await import("@/server/ai/provider");
+const { FakeProvider } = await import("@/server/ai/fake-provider");
+const { setFigmaFetch } = await import("@/server/figma/figma");
 
 resetEnvCache();
 
@@ -27,6 +30,11 @@ beforeEach(async () => {
   setStorage(new MemoryStorage());
   setDispatcher(new RecordingDispatcher());
   useInMemoryLoginLimiters();
+  setAIProvider(new FakeProvider());
+  // No real network calls from tests: Figma tests install their own fake.
+  setFigmaFetch((async () => {
+    throw new Error("unexpected network call in test");
+  }) as typeof fetch);
   const tables = await db.$queryRaw<{ tablename: string }[]>`
     SELECT tablename FROM pg_tables
     WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;

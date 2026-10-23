@@ -1,8 +1,10 @@
 import { UnrecoverableError, Worker } from "bullmq";
+import type { JobType } from "@/generated/prisma/client";
 import { getEnv } from "@/server/env";
 import { db } from "@/server/db";
 import { purgeExpiredSessions } from "@/server/auth/session";
-import { JOB_HANDLERS } from "@/server/jobs/handlers";
+import { QUEUES } from "@/server/jobs/dispatcher";
+import { JOB_HANDLERS, timeoutMsFor } from "@/server/jobs/handlers";
 import { reapStuckJobs } from "@/server/jobs/reaper";
 import { runTrackedJob } from "@/server/jobs/runner";
 import { createRedis } from "@/server/queue/connection";
@@ -10,31 +12,35 @@ import { logger } from "@/server/logger";
 
 const env = getEnv();
 const log = logger.child({ service: "worker" });
-const timeoutMs = env.JOB_TIMEOUT_SECONDS * 1000;
 
-const worker = new Worker<{ jobId: string }>(
-  "documents",
-  async (bullJob) => {
-    const result = await runTrackedJob({
-      jobId: bullJob.data.jobId,
-      attempt: bullJob.attemptsMade + 1,
-      handlers: JOB_HANDLERS,
-      timeoutMs,
-      log: log.child({ jobId: bullJob.data.jobId, type: bullJob.name }),
-    });
-    if (result.outcome === "retry") throw new Error(result.message);
-    if (result.outcome === "failed") throw new UnrecoverableError(result.message);
-  },
-  {
-    connection: createRedis({ forWorker: true }),
-    concurrency: 2,
-    // Lock must outlive the slowest step between BullMQ lock renewals.
-    lockDuration: 60_000,
-    maxStalledCount: 2,
-  },
-);
+/** Concurrency per queue: AI calls are slow and costly, so few at a time. */
+const CONCURRENCY: Record<(typeof QUEUES)[number], number> = { documents: 2, ai: 2, exports: 2 };
 
-worker.on("error", (err) => log.error({ err }, "worker error"));
+const workers = QUEUES.map((queue) => {
+  const worker = new Worker<{ jobId: string }>(
+    queue,
+    async (bullJob) => {
+      const type = bullJob.name as JobType;
+      const result = await runTrackedJob({
+        jobId: bullJob.data.jobId,
+        attempt: bullJob.attemptsMade + 1,
+        handlers: JOB_HANDLERS,
+        timeoutMs: timeoutMsFor(type),
+        log: log.child({ jobId: bullJob.data.jobId, type, queue }),
+      });
+      if (result.outcome === "retry") throw new Error(result.message);
+      if (result.outcome === "failed") throw new UnrecoverableError(result.message);
+    },
+    {
+      connection: createRedis({ forWorker: true }),
+      concurrency: CONCURRENCY[queue],
+      lockDuration: 60_000,
+      maxStalledCount: 2,
+    },
+  );
+  worker.on("error", (err) => log.error({ err, queue }, "worker error"));
+  return worker;
+});
 
 const maintenance = setInterval(() => {
   void (async () => {
@@ -47,13 +53,13 @@ const maintenance = setInterval(() => {
   })();
 }, 60_000);
 
-log.info({ concurrency: 2, timeoutSeconds: env.JOB_TIMEOUT_SECONDS }, "worker started");
+log.info({ queues: QUEUES, aiProvider: env.AI_PROVIDER }, "worker started");
 
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, "worker shutting down");
   clearInterval(maintenance);
   // Finish in-flight jobs (bounded by their own timeout), then disconnect.
-  await worker.close();
+  await Promise.all(workers.map((w) => w.close()));
   await db.$disconnect();
   process.exit(0);
 }

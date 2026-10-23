@@ -20,22 +20,37 @@ export type Permission =
   | "projects:edit"
   | "documents:read"
   | "documents:write"
+  | "requirements:write"
+  | "testcases:write"
+  | "testcases:review"
+  | "ai:run"
+  | "exports:create"
   | "targets:approve";
+
+const TESTER: readonly Permission[] = [
+  "projects:read",
+  "documents:read",
+  "documents:write",
+  "requirements:write",
+  "testcases:write",
+  "testcases:review",
+  "ai:run",
+  "exports:create",
+];
 
 const MATRIX: Record<RoleName, readonly Permission[]> = {
   ADMIN: [
+    ...TESTER,
     "users:manage",
     "projects:create",
     "projects:archive",
     "projects:manage-members",
-    "projects:read",
     "projects:edit",
-    "documents:read",
-    "documents:write",
     "targets:approve",
   ],
-  QA_TESTER: ["projects:read", "documents:read", "documents:write"],
-  VIEWER: ["projects:read", "documents:read"],
+  QA_TESTER: TESTER,
+  // Exporting the test scope only reads project data, so viewers may do it.
+  VIEWER: ["projects:read", "documents:read", "exports:create"],
 };
 
 export function can(role: RoleName, permission: Permission): boolean {

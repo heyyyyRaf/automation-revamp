@@ -94,6 +94,10 @@ model Project {
   /// Monthly AI token cap (input + output). Null = use the global default from env.
   monthlyTokenCap Int?
 
+  /// Next number for human-readable keys (REQ-001, TC-001). Incremented atomically.
+  nextRequirementNo Int @default(1)
+  nextTestCaseNo    Int @default(1)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -168,6 +172,9 @@ model Document {
   ocrUsed          Boolean          @default(false)
   extractionError  String? // user-safe message
 
+  /// Set on frames imported from a Figma link: points at the LINK document.
+  derivedFromId String?
+
   uploadedById String
   deletedAt    DateTime? // soft delete keeps traceability links intact
   createdAt    DateTime  @default(now())
@@ -176,6 +183,8 @@ model Document {
   project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   uploadedBy   User          @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
   requirements Requirement[]
+  derivedFrom  Document?     @relation("DerivedDocuments", fields: [derivedFromId], references: [id], onDelete: SetNull)
+  derived      Document[]    @relation("DerivedDocuments")
 
   @@index([projectId, category])
   @@index([projectId, sha256])
@@ -183,6 +192,7 @@ model Document {
 
 enum JobType {
   EXTRACT_TEXT
+  IMPORT_FIGMA
   ANALYZE_REQUIREMENTS
   GENERATE_TEST_CASES
   VERIFY_LOGIN
@@ -291,6 +301,9 @@ model Requirement {
   projectId        String
   key              String // REQ-001
   text             String          @db.Text
+  /// The AI's original wording. Re-analysis compares against it, so edited or deleted
+  /// requirements are never proposed again.
+  originalText     String?         @db.Text
   type             RequirementType
   origin           Origin
   sourceDocumentId String?
@@ -309,14 +322,15 @@ model Requirement {
 }
 
 model UserFlow {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   projectId   String
   name        String
-  description String?  @db.Text
+  description String?   @db.Text
   steps       Json // string[]
   origin      Origin
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -431,7 +445,10 @@ model Export {
   format      ExportFormat
   runId       String? // for RUN_REPORT
   storageKey  String?      @unique
+  fileName    String? // download name, e.g. "Checkout - Test scope.pdf"
   status      JobStatus    @default(QUEUED)
+  jobId       String?
+  error       String? // user-safe message
   createdById String
   createdAt   DateTime     @default(now())
 

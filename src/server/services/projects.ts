@@ -137,3 +137,29 @@ export async function updateProject(
     return updated;
   });
 }
+
+/** Admin only: override the monthly AI token cap (null = use the global default). */
+export async function setAiBudget(
+  auth: AuthContext,
+  projectId: string,
+  monthlyTokenCap: number | null,
+  meta: Meta,
+): Promise<void> {
+  await requireProjectAccess(auth, projectId, "projects:edit", { allowArchived: true });
+  await db.$transaction(async (tx) => {
+    await tx.project.update({ where: { id: projectId }, data: { monthlyTokenCap } });
+    await audit(
+      {
+        action: "project.ai_budget",
+        entityType: "project",
+        entityId: projectId,
+        projectId,
+        actorId: auth.user.id,
+        metadata: { monthlyTokenCap },
+        ipAddress: meta.ip,
+        requestId: meta.requestId,
+      },
+      tx,
+    );
+  });
+}

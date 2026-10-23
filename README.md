@@ -4,8 +4,10 @@ AI-assisted QA platform: upload requirements → AI analysis → test cases → 
 sandboxed runs with a live view → reports. **Nothing runs against a target app until a tester has
 approved the test case and its script.**
 
-Status: **Phase 1 (Foundation)** — auth & roles, projects, uploads with text extraction / OCR,
-background jobs, security headers, CI. AI features arrive in Phase 2.
+Status: **Phase 2 (AI generation)** — on top of Phase 1 (auth & roles, projects, uploads with
+text extraction / OCR, background jobs, security headers, CI): AI requirement analysis, open
+questions, test case generation, review & approval, Figma frame import, and test scope export
+(PDF / Excel / Word). Scripts and execution arrive in Phase 3.
 
 ## Requirements
 
@@ -48,13 +50,33 @@ npm run dev:worker     # background jobs (text extraction, OCR)
 
 Integration tests **wipe** `TEST_DATABASE_URL`; it must differ from `DATABASE_URL`.
 
+## AI configuration
+
+| Variable                         | Purpose                                                                             |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| `AI_PROVIDER`                    | `openai` (default) or `fake` — an offline, deterministic generator for demos and CI |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | Server-side only. The model must support image input and structured outputs         |
+| `OPENAI_BASE_URL`                | Optional OpenAI-compatible gateway                                                  |
+| `AI_MONTHLY_TOKEN_CAP`           | Default monthly token cap per project; Admins can override it per project           |
+| `FIGMA_ACCESS_TOKEN`             | Server-side only. Lets the worker export frames from linked Figma files             |
+
+How AI is used safely:
+
+- Uploaded content is wrapped in per-call random markers and the model is told it is data, not
+  instructions. Every response is validated with Zod before anything is saved; invalid output is
+  retried once, then the job fails without saving partial results.
+- Running analysis again only **adds** new findings. Tester edits and deletions are never undone.
+- Generated test cases start as **Draft**. Editing an approved case sends it back to Draft.
+- Token usage is recorded per call and the monthly cap is checked before every call.
+- Requests are sent with `store: false`; API keys never reach the browser or the logs.
+
 ## Roles
 
 | Role            | Can                                                                   |
 | --------------- | --------------------------------------------------------------------- |
 | Admin / QA Lead | Everything: users, all projects, members, archive, URL allowlist      |
 | QA Tester       | Upload, generate, review, run — only in projects they are a member of |
-| Viewer          | Read-only — only in projects they are a member of                     |
+| Viewer          | Read-only and export — only in projects they are a member of          |
 
 ## Security notes
 
