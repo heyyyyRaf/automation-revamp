@@ -7,6 +7,7 @@ const BUSY: Partial<Record<JobType, string>> = {
   ANALYZE_REQUIREMENTS: "An analysis is already running for this project.",
   GENERATE_TEST_CASES: "Test case generation is already running for this project.",
   GENERATE_SCRIPT: "Scripts are already being written for this project.",
+  ANALYZE_FAILURES: "Failures are already being analysed for this project.",
 };
 
 /** One job of this kind at a time per project, so results never interleave. */

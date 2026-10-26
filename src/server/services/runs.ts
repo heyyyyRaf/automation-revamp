@@ -126,6 +126,45 @@ export async function startRun(
   return db.run.update({ where: { id: run.id }, data: { jobId: job.id } });
 }
 
+/**
+ * Design "Re-run N failed" (Report screen): a new run of the failed and errored tests (or a subset of
+ * them) on the same environment with the same options. Each case uses its current approved
+ * script, so a fixed script is what runs; startRun applies every run rule again.
+ */
+export async function rerunFailed(
+  auth: AuthContext,
+  projectId: string,
+  runId: string,
+  testCaseIds: string[] | undefined,
+  meta: Meta,
+): Promise<Run> {
+  await requireProjectAccess(auth, projectId, "runs:start");
+  const run = await findRun(projectId, runId);
+  if (!FINAL_RUN.includes(run.status)) throw conflict("Wait for this run to finish first.");
+  const failed = await db.runTest.findMany({
+    where: { runId: run.id, status: { in: ["FAILED", "ERROR"] } },
+    select: { testCaseId: true },
+  });
+  const failedIds = new Set(failed.map((t) => t.testCaseId));
+  const chosen = testCaseIds ? [...new Set(testCaseIds)] : [...failedIds];
+  if (chosen.length === 0) throw conflict("Nothing failed in this run.");
+  if (chosen.some((id) => !failedIds.has(id))) {
+    throw conflict("Only tests that failed in this run can be re-run from its report.");
+  }
+  return startRun(
+    auth,
+    projectId,
+    {
+      environmentId: run.environmentId,
+      selection: { kind: "cases", testCaseIds: chosen },
+      timeoutSeconds: run.timeoutSeconds,
+      retries: run.retries,
+      slowMotion: run.slowMoMs > 0,
+    },
+    meta,
+  );
+}
+
 /** "Run #12": runs are numbered per project in the order they were started. */
 async function numbers(projectId: string): Promise<Map<string, number>> {
   const ids = await db.run.findMany({

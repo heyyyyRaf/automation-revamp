@@ -62,6 +62,8 @@ model User {
   testCasesUpdated    TestCase[]      @relation("TestCaseUpdatedBy")
   requirementsUpdated Requirement[]   @relation("RequirementUpdatedBy")
   comments            Comment[]
+  defectsLogged       Defect[]        @relation("DefectCreatedBy")
+  reportShares        ReportShare[]   @relation("ReportShareCreatedBy")
 }
 
 /// Server-side session. The cookie holds a random token; only its SHA-256 is stored.
@@ -104,6 +106,7 @@ model Project {
   nextRequirementNo Int @default(1)
   nextTestCaseNo    Int @default(1)
   nextScenarioNo    Int @default(1)
+  nextDefectNo      Int @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -125,6 +128,7 @@ model Project {
   scripts        Script[]
   runs           Run[]
   exports        Export[]
+  defects        Defect[]
   scenarios      Scenario[]
   comments       Comment[]
 
@@ -487,6 +491,7 @@ model TestCase {
   requirements TestCaseRequirement[]
   script       Script?
   runTests     RunTest[]
+  defects      Defect[]
 
   @@unique([projectId, key])
   @@index([projectId, status])
@@ -771,11 +776,12 @@ model Run {
   workers        Int       @default(1)
   createdAt      DateTime  @default(now())
 
-  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  environment Environment @relation(fields: [environmentId], references: [id])
-  triggeredBy User        @relation("RunTriggeredBy", fields: [triggeredById], references: [id])
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environment Environment   @relation(fields: [environmentId], references: [id])
+  triggeredBy User          @relation("RunTriggeredBy", fields: [triggeredById], references: [id])
   tests       RunTest[]
   exports     Export[]
+  shares      ReportShare[]
 
   @@index([projectId, createdAt])
 }
@@ -813,6 +819,7 @@ model RunTest {
   testCase      TestCase      @relation(fields: [testCaseId], references: [id])
   scriptVersion ScriptVersion @relation(fields: [scriptVersionId], references: [id])
   steps         RunStep[]
+  defects       Defect[]
 
   @@unique([runId, testCaseId])
 }
@@ -833,4 +840,60 @@ model RunStep {
   runTest RunTest @relation(fields: [runTestId], references: [id], onDelete: Cascade)
 
   @@unique([runTestId, index])
+}
+
+enum DefectSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DefectStatus {
+  OPEN
+  RESOLVED
+}
+
+/// FRD step 7: "A failed case can be logged as a defect (manually in v1; Jira/ClickUp later)".
+model Defect {
+  id          String         @id @default(cuid())
+  projectId   String
+  key         String // BUG-001
+  title       String
+  description String         @db.Text
+  severity    DefectSeverity @default(MEDIUM)
+  status      DefectStatus   @default(OPEN)
+  /// Where it was filed outside (Jira, ClickUp…), if anywhere. http(s) only.
+  externalUrl String?
+  testCaseId  String?
+  runTestId   String?
+  createdById String
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testCase  TestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  runTest   RunTest?  @relation(fields: [runTestId], references: [id], onDelete: SetNull)
+  createdBy User      @relation("DefectCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([projectId, key])
+  @@index([projectId, status])
+}
+
+/// FR-9.4 share link, option (b): an optional public, expiring, read-only link to one run
+/// report. Only the Lead can create one. The token is shown once; only its hash is stored.
+model ReportShare {
+  id          String    @id @default(cuid())
+  runId       String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+
+  run       Run  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  createdBy User @relation("ReportShareCreatedBy", fields: [createdById], references: [id])
+
+  @@index([runId])
 }

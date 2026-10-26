@@ -37,7 +37,7 @@ const SLOW_MO_MS = 800;
 
 let variants: string[] = [];
 /** Base64 payloads and the session state are passed through untouched; all text is scrubbed. */
-const RAW_KEYS = new Set(["jpeg", "data", "screenshot", "storageState"]);
+const RAW_KEYS = new Set(["jpeg", "data", "screenshot", "storageState", "html"]);
 
 function deepScrub(value: unknown, key = ""): unknown {
   if (typeof value === "string") return RAW_KEYS.has(key) ? value : scrub(value, variants);
@@ -67,6 +67,7 @@ async function main(): Promise<void> {
   try {
     if (input.mode === "run") await runTests(input, dir, lines);
     else if (input.mode === "capture") await capture(input);
+    else if (input.mode === "pdf") await printPdf(input);
     else await login(input);
   } catch (err) {
     emit({
@@ -398,6 +399,45 @@ function collectElements(): DomElement[] {
     });
   }
   return out;
+}
+
+// ── Print a report to PDF ──────────────────────────────────────────────────
+
+/**
+ * FR-9.4: the report page is self-contained (images are data: URLs), so every request is
+ * refused — the page can't reach anything, and nothing outside can reach it.
+ */
+async function printPdf(input: RunnerInput): Promise<void> {
+  const html = input.pdf?.html;
+  if (!html) throw new Error("Nothing to print.");
+  const browser = await chromium.launch({ headless: true, proxy: proxyOption(input) });
+  try {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    await context.route("**/*", (route) => {
+      const url = route.request().url();
+      return url.startsWith("data:") ? route.continue() : route.abort();
+    });
+    const page = await context.newPage();
+    await page.setContent(html, { waitUntil: "load", timeout: 60_000 });
+    const pdf = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
+    });
+    const b64 = pdf.toString("base64");
+    const total = Math.max(1, Math.ceil(b64.length / CHUNK));
+    for (let i = 0; i < total; i++) {
+      emit({
+        t: "pdf",
+        seq: i,
+        last: i === total - 1,
+        data: b64.slice(i * CHUNK, (i + 1) * CHUNK),
+      });
+    }
+    emit({ t: "done", ok: true, error: null });
+  } finally {
+    await browser.close();
+  }
 }
 
 // ── Verify login and save the session ──────────────────────────────────────

@@ -11,6 +11,7 @@ export const QUEUE_FOR_TYPE: Partial<Record<JobType, string>> = {
   REWRITE_TEST_CASE: "ai",
   GENERATE_SCRIPT: "ai",
   FIX_SCRIPT: "ai",
+  ANALYZE_FAILURES: "ai",
   VERIFY_LOGIN: "browser",
   EXECUTE_RUN: "runs",
   EXPORT: "exports",

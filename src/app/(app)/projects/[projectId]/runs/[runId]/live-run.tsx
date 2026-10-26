@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/project/page-header";
 import { Alert } from "@/components/ui/alert";
@@ -334,12 +335,9 @@ export function LiveRun({
                 Stop run
               </Button>
             )}
-            <Button disabled aria-describedby="report-later">
-              Open report
+            <Button asChild variant={active ? "secondary" : "primary"}>
+              <Link href={`/projects/${projectId}/runs/${run.id}/report`}>Open report</Link>
             </Button>
-            <span id="report-later" className="sr-only">
-              The report arrives in the next phase of the build.
-            </span>
           </>
         }
       />

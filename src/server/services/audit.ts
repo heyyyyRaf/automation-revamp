@@ -66,7 +66,13 @@ export type AuditAction =
   | "script.download"
   | "run.start"
   | "run.control"
-  | "run.download";
+  | "run.download"
+  | "run.analyze_requested"
+  | "defect.create"
+  | "defect.update"
+  | "report.share_create"
+  | "report.share_revoke"
+  | "report.share_view";
 
 export interface AuditEntry {
   action: AuditAction;

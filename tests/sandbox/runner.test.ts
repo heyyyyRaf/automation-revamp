@@ -338,3 +338,17 @@ test("TC-004 always fails", async ({ page }) => {
     expect(ends.at(-1)).toMatchObject({ status: "failed", retry: 1 });
   });
 });
+
+describe("report PDF", () => {
+  it("prints a self-contained page to PDF and lets nothing reach the network", async () => {
+    const { printReportPdf } = await import("@/server/exports/report-files");
+    const before = site.requests();
+    const html = `<!doctype html><html><body><h1>Run #3 report</h1>
+      <img src="${site.origin}/tracker.png"><link rel="stylesheet" href="${site.origin}/x.css">
+      <script>document.body.append("ran")</script></body></html>`;
+    const pdf = await printReportPdf(html, "pdf-test-1");
+    expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+    expect(pdf.length).toBeGreaterThan(500);
+    expect(site.requests()).toBe(before);
+  });
+});

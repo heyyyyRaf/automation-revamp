@@ -1,5 +1,6 @@
 import type { JobType } from "@/generated/prisma/client";
 import { getEnv } from "@/server/env";
+import { analyzeFailuresHandler } from "@/server/jobs/processors/analyze-failures";
 import { analyzeRequirementsHandler } from "@/server/jobs/processors/analyze-requirements";
 import { executeRunHandler } from "@/server/jobs/processors/execute-run";
 import { exportHandler } from "@/server/jobs/processors/export";
@@ -23,6 +24,7 @@ export const JOB_HANDLERS: Partial<Record<JobType, JobHandler>> = {
   GENERATE_SCRIPT: generateScriptsHandler,
   FIX_SCRIPT: fixScriptHandler,
   EXECUTE_RUN: executeRunHandler,
+  ANALYZE_FAILURES: analyzeFailuresHandler,
 };
 
 /** Per-attempt hard timeout. AI jobs make many sequential model calls, so they get longer. */
@@ -38,6 +40,7 @@ export function timeoutMsFor(type: JobType): number {
       return (env.RUN_MAX_SECONDS + 120) * 1000;
     case "VERIFY_LOGIN":
     case "FIX_SCRIPT":
+    case "ANALYZE_FAILURES":
       return 5 * 60 * 1000;
     case "EXPORT":
     case "IMPORT_FIGMA":

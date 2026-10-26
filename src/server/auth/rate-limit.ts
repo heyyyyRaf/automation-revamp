@@ -89,3 +89,47 @@ export async function recordLoginSuccess(email: string, ip: string): Promise<voi
   const l = getLimiters();
   await l.emailIp.delete(keys(email, ip).emailIp);
 }
+
+// ── Public report links ────────────────────────────────────────────────────
+
+/** Unknown or expired share links from one IP (tokens can't be guessed; this stops scanning). */
+let shareMisses: RateLimiterAbstract | undefined;
+
+function getShareLimiter(): RateLimiterAbstract {
+  shareMisses ??= new RateLimiterRedis({
+    storeClient: getRedis(),
+    keyPrefix: "share_miss_ip",
+    points: 30,
+    duration: WINDOW_SECONDS,
+    insuranceLimiter: new RateLimiterMemory({
+      keyPrefix: "share_miss_ip",
+      points: 30,
+      duration: WINDOW_SECONDS,
+    }),
+  });
+  return shareMisses;
+}
+
+/** Tests use an in-memory limiter. */
+export function useInMemoryShareLimiter(): void {
+  shareMisses = new RateLimiterMemory({
+    keyPrefix: "share_miss_ip",
+    points: 30,
+    duration: WINDOW_SECONDS,
+  });
+}
+
+export async function assertShareLookupAllowed(ip: string): Promise<void> {
+  const l = getShareLimiter();
+  const res = await l.get(ip);
+  if (res && res.consumedPoints >= l.points)
+    throw tooManyRequests(Math.ceil(res.msBeforeNext / 1000));
+}
+
+export async function recordShareMiss(ip: string): Promise<void> {
+  await getShareLimiter()
+    .consume(ip)
+    .catch((e: unknown) => {
+      if (!(e instanceof RateLimiterRes)) throw e;
+    });
+}

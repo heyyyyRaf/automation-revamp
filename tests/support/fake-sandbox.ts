@@ -34,6 +34,8 @@ export class FakeSandbox implements Sandbox {
   loginOk = true;
   /** Capture fails (page not reachable). */
   captureFails = false;
+  /** PDF printing fails. */
+  pdfFails = false;
   /** Throw after this many tests (simulates a crashed container). */
   crashAfter: number | null = null;
   /** Decide each test's outcome per attempt from its code. */
@@ -45,7 +47,7 @@ export class FakeSandbox implements Sandbox {
   async start(_sessionId: string, input: RunnerInput): Promise<SandboxSession> {
     this.inputs.push(input);
     // Settings are fixed per session (sessions run in parallel).
-    const { crashAfter, loginOk, captureFails, outcome, beforeTest } = this;
+    const { crashAfter, loginOk, captureFails, pdfFails, outcome, beforeTest } = this;
     let stopped = false;
     async function* events(): AsyncIterable<RunnerEvent> {
       yield { t: "ready" };
@@ -85,6 +87,17 @@ export class FakeSandbox implements Sandbox {
             screenshot: null,
           };
         }
+        yield { t: "done", ok: true, error: null };
+        return;
+      }
+      if (input.mode === "pdf") {
+        if (pdfFails || !input.pdf?.html) {
+          yield { t: "done", ok: false, error: "print failed" };
+          return;
+        }
+        const b64 = Buffer.from(`%PDF-1.7 fake ${input.pdf.html.length}`).toString("base64");
+        yield { t: "pdf", seq: 0, last: false, data: b64.slice(0, 8) };
+        yield { t: "pdf", seq: 1, last: true, data: b64.slice(8) };
         yield { t: "done", ok: true, error: null };
         return;
       }

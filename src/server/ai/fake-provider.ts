@@ -29,6 +29,25 @@ export class FakeProvider implements AIProvider {
           usage,
           model: "fake",
         };
+      case "failure_analysis":
+        return {
+          raw: /Timeout|timed out|net::/i.test(text)
+            ? {
+                cause: "ENVIRONMENT",
+                explanation: "The page did not respond in time; check the environment.",
+              }
+            : /not on the|locator|selector|strict mode/i.test(text)
+              ? {
+                  cause: "SCRIPT_ISSUE",
+                  explanation: "An element the script uses was not found; check the selector.",
+                }
+              : {
+                  cause: "APP_BUG",
+                  explanation: "The app did not show what the test case expects.",
+                },
+          usage,
+          model: "fake",
+        };
       case "test_case_rewrite":
         return { raw: fakeRewrite(text), usage, model: "fake" };
       case "script_generation":

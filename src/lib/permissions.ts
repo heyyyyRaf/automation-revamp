@@ -33,6 +33,9 @@ export type Permission =
   | "runs:start"
   | "runs:control"
   | "comments:create"
+  | "defects:write"
+  | "reports:share"
+  | "audit:read"
   | "settings:manage";
 
 /** FRD roles table: "the QA Tester does almost everything". */
@@ -55,6 +58,7 @@ const TESTER: readonly Permission[] = [
   "scripts:approve",
   "runs:start",
   "runs:control",
+  "defects:write",
 ];
 
 const MATRIX: Record<RoleName, readonly Permission[]> = {
@@ -66,6 +70,9 @@ const MATRIX: Record<RoleName, readonly Permission[]> = {
     "projects:manage-members",
     "targets:approve",
     "settings:manage",
+    // FR-9.4 option (b): only the Lead can turn on a public, expiring report link.
+    "reports:share",
+    "audit:read",
   ],
   QA_TESTER: TESTER,
   // FRD: viewers see test cases and reports for their project and can comment.

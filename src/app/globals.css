@@ -36,6 +36,9 @@
   --color-purple: #5236b0;
   --color-purple-bar: #6b4bd8;
   --color-neutral-soft: #edeff4;
+  /* Report coverage: "Not run yet". */
+  --color-amber-soft: #fff4db;
+  --color-amber: #7a5300;
 
   --font-sans: "Plus Jakarta Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;

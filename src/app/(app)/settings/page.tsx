@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { requireAuthPage } from "@/server/auth/current-user";
@@ -89,6 +91,22 @@ export default async function SettingsPage() {
           </div>
         )}
         {lead && <AiSettingsForm initial={lead[1]} />}
+        {isLead && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Audit log</CardTitle>
+              <CardDescription>
+                Every sign-in, approval, run and change, with who made it and the values before and
+                after.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="secondary" asChild>
+                <Link href="/settings/audit">Open the audit log</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </>
   );

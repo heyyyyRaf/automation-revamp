@@ -20,7 +20,7 @@ export type LoginConfig = z.infer<typeof loginConfigSchema>;
 const proxySchema = z.object({ server: z.string(), username: z.string(), password: z.string() });
 
 export const runnerInputSchema = z.object({
-  mode: z.enum(["run", "capture", "login"]),
+  mode: z.enum(["run", "capture", "login", "pdf"]),
   baseURL: z.string().url(),
   proxy: proxySchema.nullable(),
   storageState: z.string().max(5_000_000).nullable(),
@@ -40,6 +40,8 @@ export const runnerInputSchema = z.object({
     .object({ paths: z.array(z.string().startsWith("/").max(2000)).min(1).max(5) })
     .optional(),
   login: loginConfigSchema.extend({ account: z.string() }).optional(),
+  /** FR-9.4: print a self-contained report page to PDF (no network). */
+  pdf: z.object({ html: z.string().max(11_000_000) }).optional(),
 });
 export type RunnerInput = z.infer<typeof runnerInputSchema>;
 
@@ -130,6 +132,12 @@ export const runnerEventSchema = z.discriminatedUnion("t", [
     storageState: text(5_000_000).nullable(),
     error: text(2000).nullable(),
     screenshot: text(3_000_000).nullable(),
+  }),
+  z.object({
+    t: z.literal("pdf"),
+    seq: z.number().int().min(0).max(1000),
+    last: z.boolean(),
+    data: text(400_000),
   }),
   z.object({ t: z.literal("paused") }),
   z.object({ t: z.literal("resumed") }),

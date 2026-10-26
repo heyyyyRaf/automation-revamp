@@ -4,10 +4,13 @@ AI-assisted QA platform: upload requirements → AI analysis → test cases → 
 sandboxed runs with a live view → reports. **Nothing runs against a target app until a tester has
 approved the test case and its script.**
 
-Status: **Phase 2 (AI generation)** — on top of Phase 1 (auth & roles, projects, uploads with
-text extraction / OCR, background jobs, security headers, CI): AI requirement analysis, open
-questions, test case generation, review & approval, Figma frame import, and test scope export
-(PDF / Excel / Word). Scripts and execution arrive in Phase 3.
+Status: **Phase 4 (reports)** — the whole FRD flow, steps 1–8: uploads with text extraction /
+OCR and Figma frames, AI requirement analysis and questions, test case generation, review and
+approval, environments with a verified sign-in, Playwright script generation / editing /
+approval, sandboxed runs (up to 5 in parallel) with a live view, and run reports with
+requirement coverage, the AI's likely cause per failure, "Re-run failed", defects, PDF / HTML
+export, share links and an audit log viewer. See `docs/TRACEABILITY.md` for every FRD
+requirement and the test that proves it.
 
 ## Requirements
 
@@ -72,11 +75,25 @@ How AI is used safely:
 
 ## Roles
 
-| Role            | Can                                                                   |
-| --------------- | --------------------------------------------------------------------- |
-| Admin / QA Lead | Everything: users, all projects, members, archive, URL allowlist      |
-| QA Tester       | Upload, generate, review, run — only in projects they are a member of |
-| Viewer          | Read-only and export — only in projects they are a member of          |
+| Role            | Can                                                                                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Admin / QA Lead | Everything: users, all projects, members, archive, URL allowlist, AI settings, shared environments, public report links, audit log |
+| QA Tester       | Upload, generate, review, script, run, log defects — only in projects they are a member of                                         |
+| Viewer          | Read, comment and export — only in projects they are a member of                                                                   |
+
+## Reports and sharing
+
+- Each finished run has a report: pass rate, failures with screenshot, error and the AI's
+  likely cause (app bug, script issue or environment), manual-only cases, and requirement
+  coverage as of that run.
+- **Re-run failed** starts a new run of the failed cases on the same environment and options.
+- **Log defect** records a failed case as a defect (BUG-001…) with an optional tracker link.
+- **Export PDF / HTML**: a self-contained page (no scripts, no external requests). The PDF is
+  printed by Chromium inside a sandbox that is granted no network at all.
+- **Share link**: every member can copy the members-only link. Only the Admin / QA Lead can turn
+  on a public, read-only link that expires after 1, 7 or 30 days. The link is shown once; only
+  its SHA-256 is stored. It can be turned off at any time, shows no internal addresses, is
+  `noindex`, and unknown links are rate-limited per IP.
 
 ## Security notes
 
@@ -90,5 +107,7 @@ How AI is used safely:
   (metadata and appended payloads stripped), downloads are always `attachment` + `nosniff`.
 - Strict nonce-based CSP and hardening headers on every page; API responses use `default-src 'none'`.
 - Logs are structured (pino) with request IDs; secrets are redacted.
+- Every change is written to the audit log with before/after values (never secrets); the
+  Admin / QA Lead reads it under Settings → Audit log.
 - Production: put the app behind a reverse proxy that terminates TLS, appends `X-Forwarded-For`
   and limits request bodies to ~26 MB; set `TRUSTED_PROXY_HOPS` accordingly.

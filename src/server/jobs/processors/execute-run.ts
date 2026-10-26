@@ -6,7 +6,7 @@ import { AppError } from "@/server/errors";
 import { JobFailure, type JobHandler } from "@/server/jobs/runner";
 import { logger } from "@/server/logger";
 import { getRunBus, type LiveEvent, type RunControl } from "@/server/runs/bus";
-import { FINAL_RUN, finishRun } from "@/server/runs/finish";
+import { FINAL_RUN, finishRun, startFailureAnalysis } from "@/server/runs/finish";
 import type { RunnerEvent } from "@/server/sandbox/protocol";
 import { runInSandbox, type SandboxSession } from "@/server/sandbox/sandbox";
 import { grantedOrigins, loadEnvironmentSecrets } from "@/server/services/environments";
@@ -364,5 +364,11 @@ export const executeRunHandler: JobHandler = async ({ job, signal }) => {
         : "A test worker stopped unexpectedly. Finished results are kept."
       : null,
   );
+  // FR-9.3: explain failures in the background (skipped when the AI budget is used up).
+  if (status === "FAILED" || status === "ABORTED") {
+    await startFailureAnalysis(run.projectId, run.id, job.createdById).catch((err: unknown) =>
+      logger.warn({ err, runId: run.id }, "failure analysis not started"),
+    );
+  }
   return { status, workers };
 };

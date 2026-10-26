@@ -21,7 +21,8 @@ Object.assign(process.env, {
 const { resetEnvCache } = await import("@/server/env");
 const { setStorage, MemoryStorage } = await import("@/server/storage/storage");
 const { setDispatcher, RecordingDispatcher } = await import("@/server/jobs/dispatcher");
-const { useInMemoryLoginLimiters } = await import("@/server/auth/rate-limit");
+const { useInMemoryLoginLimiters, useInMemoryShareLimiter } =
+  await import("@/server/auth/rate-limit");
 const { db } = await import("@/server/db");
 const { setAIProvider } = await import("@/server/ai/provider");
 const { FakeProvider } = await import("@/server/ai/fake-provider");
@@ -35,6 +36,7 @@ beforeEach(async () => {
   setStorage(new MemoryStorage());
   setDispatcher(new RecordingDispatcher());
   useInMemoryLoginLimiters();
+  useInMemoryShareLimiter();
   setAIProvider(new FakeProvider());
   setRunBus(new MemoryRunBus());
   resetSettingsCache();

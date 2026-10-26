@@ -16,7 +16,7 @@ export function FlowSteps({ projectId, current }: { projectId: string; current: 
     `${base}/environments`,
     `${base}/scripts`,
     `${base}/runs`,
-    null, // the Report screen arrives with Phase 4
+    `${base}/report`,
   ];
   return (
     <ol

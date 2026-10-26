@@ -96,3 +96,17 @@ export const ScreenIcon = (p: P) => (
     <path d="M3 9h18M8 21h8" />
   </Svg>
 );
+/** Report: "Re-run N failed". */
+export const RerunIcon = (p: P) => (
+  <Svg strokeWidth={2.2} {...p}>
+    <path d="M4 4v6h6M20 20v-6h-6M5 15a7 7 0 0 0 12 3M19 9A7 7 0 0 0 7 6" />
+  </Svg>
+);
+/** Report: "Screenshot at failure" placeholder. */
+export const ImageIcon = (p: P) => (
+  <Svg strokeWidth={1.8} {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <circle cx="9" cy="10" r="2" />
+    <path d="M21 16l-5-5-8 8" />
+  </Svg>
+);

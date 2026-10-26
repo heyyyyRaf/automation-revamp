@@ -21,6 +21,8 @@ const STATUS: Record<RunStatusName, { label: string; tone: BadgeTone }> = {
   ABORTED: { label: "Aborted", tone: "warning" },
 };
 
+const ACTIVE: RunStatusName[] = ["QUEUED", "RUNNING", "PAUSED"];
+
 export function RunsList({
   projectId,
   runs,
@@ -39,11 +41,16 @@ export function RunsList({
         <h2 id="runs-heading" className="text-[19px] font-bold">
           Runs
         </h2>
-        {canRun && (
-          <Button onClick={() => setStarting(true)}>
-            <PlayIcon /> Run and watch
+        <div className="flex flex-wrap gap-3">
+          <Button variant="secondary" asChild>
+            <Link href={`/projects/${projectId}/defects`}>Defects</Link>
           </Button>
-        )}
+          {canRun && (
+            <Button onClick={() => setStarting(true)}>
+              <PlayIcon /> Run and watch
+            </Button>
+          )}
+        </div>
       </div>
       {runs.length === 0 ? (
         <EmptyState
@@ -60,7 +67,10 @@ export function RunsList({
                 <th className="px-2 py-3.5 font-semibold">Status</th>
                 <th className="px-2 py-3.5 font-semibold">Results</th>
                 <th className="px-2 py-3.5 font-semibold">Environment</th>
-                <th className="px-4 py-3.5 font-semibold">Started</th>
+                <th className="px-2 py-3.5 font-semibold">Started</th>
+                <th className="px-4 py-3.5 font-semibold">
+                  <span className="sr-only">Report</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -79,8 +89,18 @@ export function RunsList({
                     {r.skipped > 0 && ` · ${r.skipped} skipped`} of {r.total}
                   </td>
                   <td className="text-ink-2 px-2 py-3.5 text-[13px]">{r.environment}</td>
-                  <td className="text-muted px-4 py-3.5 text-[13px]" suppressHydrationWarning>
+                  <td className="text-muted px-2 py-3.5 text-[13px]" suppressHydrationWarning>
                     {activityLabel("", r.createdAt).trim()} · {r.triggeredBy}
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-[13px]">
+                    {!ACTIVE.includes(r.status) && (
+                      <Link
+                        href={`/projects/${projectId}/runs/${r.id}/report`}
+                        className="font-semibold"
+                      >
+                        Report
+                      </Link>
+                    )}
                   </td>
                 </tr>
               ))}

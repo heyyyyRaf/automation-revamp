@@ -1,5 +1,7 @@
 import type { RunStatus, TestCaseStatus, TestResultStatus } from "@/generated/prisma/client";
 import { db } from "@/server/db";
+import { getAiBudget } from "@/server/ai/budget";
+import { enqueueJob } from "@/server/jobs/enqueue";
 import { getRunBus } from "@/server/runs/bus";
 
 const FINAL_TEST: TestResultStatus[] = ["PASSED", "FAILED", "ERROR", "SKIPPED"];
@@ -105,4 +107,24 @@ export async function abortRunAfterCrash(runId: string, projectId: string, messa
   const run = await db.run.findFirst({ where: { id: runId, projectId } });
   if (!run || FINAL_RUN.includes(run.status)) return;
   await finishRun(run.id, "aborted", message);
+}
+
+/** FR-9.3: queue the "likely cause" analysis for a run's failures, if AI budget is left. */
+export async function startFailureAnalysis(
+  projectId: string,
+  runId: string,
+  createdById: string | null,
+) {
+  const failures = await db.runTest.count({
+    where: { runId, status: { in: ["FAILED", "ERROR"] } },
+  });
+  if (failures === 0) return null;
+  if ((await getAiBudget(projectId)).remaining <= 0) return null;
+  return enqueueJob({
+    projectId,
+    type: "ANALYZE_FAILURES",
+    payload: { runId },
+    ...(createdById ? { createdById } : {}),
+    maxAttempts: 2,
+  });
 }

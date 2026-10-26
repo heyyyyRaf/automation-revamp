@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
+import { startDownload } from "@/lib/download";
 import { plural } from "@/lib/format";
 import {
   isJobActive,
@@ -377,17 +378,6 @@ function QuestionsCard({
       })}
     </Card>
   );
-}
-
-/** Starts a file download (the response is an attachment, so the page stays put). */
-function startDownload(href: string) {
-  const a = document.createElement("a");
-  a.href = href;
-  a.rel = "noopener";
-  a.download = "";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
 }
 
 const SCOPE_FORMATS = [

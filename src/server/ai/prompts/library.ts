@@ -100,3 +100,17 @@ Fix the problems listed in the input (compile errors, unsafe code, selectors mis
 
 ${SCRIPT_RULES}`,
 };
+
+/** FR-9.3: a one-line probable cause for each failed test. */
+export const FAILURE_ANALYSIS_PROMPT: PromptTemplate = {
+  id: "failure-analysis",
+  version: 1,
+  text: `You are a senior QA engineer triaging a failed automated browser test.
+Decide the most likely cause:
+- APP_BUG: the application did not behave as the test case expects (wrong text, missing validation, wrong page, server error from the app).
+- SCRIPT_ISSUE: the test script is wrong or stale (an element was renamed or moved, a wrong selector, a wrong assumption in the script) while the app may be fine.
+- ENVIRONMENT: the test environment got in the way (site down, timeouts loading pages, sign-in expired, network errors, test data missing).
+- UNKNOWN: the evidence is not enough to say.
+Use the error message, the failing step, browser console errors, failed requests, the script and the screenshot if one is given.
+explanation: ONE plain sentence for a tester (max 200 characters), naming the specific thing that went wrong, for example "credit check is missing on submit" or "the Month filter was renamed; check the selector".`,
+};

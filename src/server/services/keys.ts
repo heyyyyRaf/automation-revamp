@@ -6,6 +6,7 @@ const FIELD = {
   REQ: "nextRequirementNo",
   TC: "nextTestCaseNo",
   SC: "nextScenarioNo",
+  BUG: "nextDefectNo",
 } as const;
 
 /**
@@ -23,7 +24,12 @@ export async function allocateKeys(
   const updated = await tx.project.update({
     where: { id: projectId },
     data: { [field]: { increment: count } },
-    select: { nextRequirementNo: true, nextTestCaseNo: true, nextScenarioNo: true },
+    select: {
+      nextRequirementNo: true,
+      nextTestCaseNo: true,
+      nextScenarioNo: true,
+      nextDefectNo: true,
+    },
   });
   const start = updated[field] - count;
   return Array.from({ length: count }, (_, i) => `${kind}-${String(start + i).padStart(3, "0")}`);

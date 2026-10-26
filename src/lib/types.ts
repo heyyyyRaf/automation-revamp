@@ -348,3 +348,108 @@ export type LiveEventItem =
   | { type: "paused" }
   | { type: "resumed" }
   | { type: "end"; status: RunStatusName };
+
+// ── Phase 4: reports, defects, share links, audit ──────────────────────────────
+
+export type CoverageStatusName = "PASSING" | "FAILING" | "NOT_RUN" | "MANUAL" | "NOT_COVERED";
+export type FailureCauseName = "APP_BUG" | "SCRIPT_ISSUE" | "ENVIRONMENT" | "UNKNOWN";
+export type DefectSeverityName = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+export type DefectStatusName = "OPEN" | "RESOLVED";
+
+export interface CoverageData {
+  total: number;
+  covered: number;
+  rows: {
+    id: string;
+    key: string;
+    text: string;
+    status: CoverageStatusName;
+    cases: { key: string; automatable: boolean; latest: string | null }[];
+  }[];
+}
+
+export interface ReportFailure {
+  runTestId: string;
+  testCaseId: string;
+  key: string;
+  title: string;
+  requirementKeys: string[];
+  status: "FAILED" | "ERROR";
+  error: string | null;
+  attempts: number;
+  hasScreenshot: boolean;
+  hasTrace: boolean;
+  likelyCause: FailureCauseName | null;
+  causeExplanation: string | null;
+  defect: { id: string; key: string; status: DefectStatusName } | null;
+}
+
+/** FR-9.1 run report as the screens receive it (the public view has no base URL). */
+export interface ReportData {
+  project: { id: string; name: string };
+  run: {
+    id: string;
+    number: number;
+    status: RunStatusName;
+    error: string | null;
+    environment: string;
+    triggeredBy: string;
+    createdAt: DateLike;
+    startedAt: DateLike | null;
+    finishedAt: DateLike | null;
+    durationMs: number | null;
+    retries: number;
+    timeoutSeconds: number;
+  };
+  totals: {
+    automated: number;
+    passed: number;
+    failed: number;
+    errors: number;
+    skipped: number;
+    manual: number;
+    passRate: number | null;
+  };
+  failures: ReportFailure[];
+  passedCases: { key: string; title: string; status: string; durationMs: number | null }[];
+  manualCases: { id: string; key: string; title: string; automatableReason: string | null }[];
+  coverage: CoverageData;
+  analysis: { status: JobStatusName; error: string | null } | null;
+}
+
+export interface DefectItem {
+  id: string;
+  key: string;
+  title: string;
+  description: string;
+  severity: DefectSeverityName;
+  status: DefectStatusName;
+  externalUrl: string | null;
+  resolvedAt: DateLike | null;
+  createdAt: DateLike;
+  updatedAt: DateLike;
+  createdBy: { name: string };
+  testCase: { id: string; key: string; title: string } | null;
+  runTest: { id: string; runId: string } | null;
+}
+
+export interface ShareItem {
+  id: string;
+  expiresAt: DateLike;
+  createdAt: DateLike;
+  createdBy: { name: string };
+}
+
+export interface AuditEntryItem {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  metadata: unknown;
+  before: unknown;
+  after: unknown;
+  ipAddress: string | null;
+  createdAt: DateLike;
+  actor: { id: string; name: string } | null;
+  project: { id: string; name: string } | null;
+}

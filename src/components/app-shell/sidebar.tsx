@@ -33,7 +33,7 @@ export function Sidebar({ user }: { user: { name: string; roleLabel: string } })
       active:
         pathname === "/projects" ||
         (projectId !== undefined &&
-          !/\/(test-cases|scripts|runs)(\/|$)/.test(
+          !/\/(test-cases|scripts|runs|report|defects)(\/|$)/.test(
             pathname.slice(`/projects/${projectId}`.length),
           )),
     },
@@ -53,7 +53,7 @@ export function Sidebar({ user }: { user: { name: string; roleLabel: string } })
       href: inProject("runs"),
       label: "Runs and reports",
       Icon: PlayIcon,
-      active: /\/runs(\/|$)/.test(pathname),
+      active: /\/(runs|report|defects)(\/|$)/.test(pathname),
     },
     {
       href: "/settings",

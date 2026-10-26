@@ -344,6 +344,58 @@ export const runCreateSchema = z.object({
   slowMotion: z.boolean().default(false),
 });
 
+/** Design "Re-run N failed": all failures of the run, or the chosen ones. */
+export const rerunSchema = z.object({
+  testCaseIds: z.array(ID).min(1).max(500).optional(),
+});
+
+export const reportExportSchema = z.object({ format: z.enum(["PDF", "HTML"]) });
+
+export const DEFECT_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
+export const DEFECT_STATUSES = ["OPEN", "RESOLVED"] as const;
+
+/** Where the defect was filed outside, if anywhere: http(s) links only. */
+const externalUrl = z
+  .string()
+  .trim()
+  .max(2000)
+  .refine((v) => {
+    if (v === "") return true;
+    try {
+      const u = new URL(v);
+      return u.protocol === "https:" || u.protocol === "http:";
+    } catch {
+      return false;
+    }
+  }, "Enter a link that starts with https://.")
+  .transform((v) => (v === "" ? null : v));
+
+/** FRD step 7: log a failed case as a defect (manual in v1). */
+export const defectCreateSchema = z.object({
+  title: trimmed(1, 200, "Title"),
+  description: z.string().trim().max(10_000).default(""),
+  severity: z.enum(DEFECT_SEVERITIES).default("MEDIUM"),
+  externalUrl: externalUrl.nullable().optional(),
+  runTestId: ID.optional(),
+  testCaseId: ID.optional(),
+});
+
+export const defectUpdateSchema = z
+  .object({
+    title: trimmed(1, 200, "Title").optional(),
+    description: z.string().trim().max(10_000).optional(),
+    severity: z.enum(DEFECT_SEVERITIES).optional(),
+    status: z.enum(DEFECT_STATUSES).optional(),
+    externalUrl: externalUrl.nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, "Nothing to change.");
+
+/** FR-9.4 option (b): public link lifetime. */
+export const SHARE_DAYS = [1, 7, 30] as const;
+export const shareCreateSchema = z.object({
+  days: z.union([z.literal(1), z.literal(7), z.literal(30)]).default(7),
+});
+
 export const runControlSchema = z.object({
   action: z.enum(["pause", "resume", "stop", "slow", "normal"]),
 });
