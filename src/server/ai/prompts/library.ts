@@ -65,3 +65,38 @@ export const REWRITE_CASE_PROMPT: PromptTemplate = {
   text: `You are a senior QA engineer. Rewrite ONE existing test case following the tester's instruction.
 Keep its purpose and the requirements it verifies unless the instruction says otherwise. Fill every field (title, preconditions, steps, testData, expectedResult, type, priority, requirementKeys, automatable, automatableReason, tags) using the same rules as when the case was generated: placeholders for credentials, only REQ keys from the input, and one "none" test data entry if no data is needed.`,
 };
+
+const SCRIPT_RULES = `Write ONE Playwright test file in TypeScript. Rules:
+- First line: import { test, expect, account, vars } from "./traxion"; (import only what you use).
+- Do not import anything else. No Node.js APIs (fs, process, require, fetch), no eval, no page.evaluate with strings.
+- Use only the \`page\` fixture: test("<KEY> <title>", async ({ page }) => { ... }).
+- Navigate with paths relative to the environment, e.g. await page.goto("/cart"). Never absolute URLs.
+- Use only locators that exist in the captured pages: getByRole(role, { name }), getByLabel, getByTestId,
+  getByPlaceholder, getByText. Avoid CSS/XPath unless nothing else identifies the element.
+- Wrap each manual step in await test.step("<step text>", async () => { ... }).
+- Assert every expected result with expect(...) web-first assertions (toBeVisible, toHaveText, toHaveURL).
+- Never use page.waitForTimeout or fixed sleeps.
+- Credentials: const user = account("<label>"); then user.username / user.password.
+  Use only the account labels listed. Map placeholders like {{STANDARD_USER}} to the closest label.
+- Non-secret settings: vars.NAME (only the names listed).
+- notes: one short paragraph for the tester (assumptions, elements not on the captured pages).`;
+
+/** FR-6.1/6.2: a Playwright script from an approved case and the real captured pages. */
+export const SCRIPT_PROMPT: PromptTemplate = {
+  id: "script-generation",
+  version: 1,
+  text: `You are a senior test automation engineer writing Playwright tests.
+
+${SCRIPT_RULES}`,
+};
+
+/** "Ask AI to fix" and the automatic second attempt after a compile error (FRD step 4). */
+export const SCRIPT_FIX_PROMPT: PromptTemplate = {
+  id: "script-fix",
+  version: 1,
+  text: `You are a senior test automation engineer fixing a Playwright test.
+Return the complete corrected file in \`code\` and a short explanation in \`notes\`.
+Fix the problems listed in the input (compile errors, unsafe code, selectors missing from the page, a failed run, or the tester's instruction). Keep everything that already works; change only what is needed.
+
+${SCRIPT_RULES}`,
+};

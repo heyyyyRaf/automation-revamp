@@ -1,11 +1,15 @@
 import type { JobType } from "@/generated/prisma/client";
 import { getEnv } from "@/server/env";
 import { analyzeRequirementsHandler } from "@/server/jobs/processors/analyze-requirements";
+import { executeRunHandler } from "@/server/jobs/processors/execute-run";
 import { exportHandler } from "@/server/jobs/processors/export";
+import { fixScriptHandler } from "@/server/jobs/processors/fix-script";
+import { generateScriptsHandler } from "@/server/jobs/processors/generate-scripts";
 import { extractTextHandler } from "@/server/jobs/processors/extract-text";
 import { generateTestCasesHandler } from "@/server/jobs/processors/generate-test-cases";
 import { importFigmaHandler } from "@/server/jobs/processors/import-figma";
 import { rewriteTestCaseHandler } from "@/server/jobs/processors/rewrite-test-case";
+import { verifyEnvironmentHandler } from "@/server/jobs/processors/verify-environment";
 import type { JobHandler } from "@/server/jobs/runner";
 
 export const JOB_HANDLERS: Partial<Record<JobType, JobHandler>> = {
@@ -15,6 +19,10 @@ export const JOB_HANDLERS: Partial<Record<JobType, JobHandler>> = {
   GENERATE_TEST_CASES: generateTestCasesHandler,
   REWRITE_TEST_CASE: rewriteTestCaseHandler,
   EXPORT: exportHandler,
+  VERIFY_LOGIN: verifyEnvironmentHandler,
+  GENERATE_SCRIPT: generateScriptsHandler,
+  FIX_SCRIPT: fixScriptHandler,
+  EXECUTE_RUN: executeRunHandler,
 };
 
 /** Per-attempt hard timeout. AI jobs make many sequential model calls, so they get longer. */
@@ -23,7 +31,14 @@ export function timeoutMsFor(type: JobType): number {
   switch (type) {
     case "ANALYZE_REQUIREMENTS":
     case "GENERATE_TEST_CASES":
+    case "GENERATE_SCRIPT":
       return env.AI_JOB_TIMEOUT_SECONDS * 1000;
+    case "EXECUTE_RUN":
+      // The run enforces its own limit (RUN_MAX_SECONDS); leave room to save results.
+      return (env.RUN_MAX_SECONDS + 120) * 1000;
+    case "VERIFY_LOGIN":
+    case "FIX_SCRIPT":
+      return 5 * 60 * 1000;
     case "EXPORT":
     case "IMPORT_FIGMA":
       return Math.min(env.JOB_TIMEOUT_SECONDS, 180) * 1000;

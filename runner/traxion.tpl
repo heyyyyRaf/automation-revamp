@@ -23,6 +23,8 @@ export function account(label: string): { username: string; password: string } {
 export const vars: Readonly<Record<string, string>> = Object.freeze({ ...secrets.vars });
 
 const CONTROL = join(DIR, "control");
+/** Design "Slow motion": milliseconds to wait before each action (0 = normal speed). */
+const SPEED = join(DIR, "speed");
 const ACTIONS = new Set([
   "goto", "reload", "goBack", "goForward", "click", "dblclick", "tap", "fill", "type",
   "press", "pressSequentially", "check", "uncheck", "setChecked", "selectOption", "hover",
@@ -37,8 +39,25 @@ function paused(): boolean {
   }
 }
 
-/** Blocks before each user action while the run is paused; paused time does not count. */
+function slowMoMs(): number {
+  try {
+    const ms = existsSync(SPEED) ? Number(readFileSync(SPEED, "utf8").trim()) : 0;
+    return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), 2000) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Before each user action: waits while the run is paused, and slows down when slow motion
+ * is on. Neither counts toward the test's timeout.
+ */
 async function gate(testInfo: TestInfo): Promise<void> {
+  const slow = slowMoMs();
+  if (slow > 0) {
+    await new Promise((r) => setTimeout(r, slow));
+    testInfo.setTimeout(testInfo.timeout + slow);
+  }
   if (!paused()) return;
   const started = Date.now();
   while (paused()) await new Promise((r) => setTimeout(r, 250));
@@ -65,8 +84,57 @@ function wrap<T extends object>(target: T, testInfo: TestInfo): T {
   });
 }
 
+const CONSOLE_LEVELS: Record<string, string> = {
+  log: "log",
+  info: "info",
+  warning: "warning",
+  error: "error",
+  debug: "debug",
+};
+const NET_TYPES = new Set(["document", "xhr", "fetch"]);
+let consoleCount = 0;
+let netCount = 0;
+
+function line(prefix: string, payload: Record<string, unknown>): void {
+  process.stdout.write(`${prefix}${JSON.stringify(payload)}\n`);
+}
+
 export const test = base.extend<{ _traxionScreencast: void }>({
-  page: async ({ page }, use, testInfo) => {
+  page: async ({ page, baseURL }, use, testInfo) => {
+    // Browser console (FR-8.3) and same-origin page/API requests (Network tab). Only the
+    // path is kept — never query strings or bodies, which may carry typed values.
+    const origin = baseURL ? new URL(baseURL).origin : null;
+    page.on("console", (msg) => {
+      if (consoleCount++ > 500) return;
+      line("__TQA_CONSOLE__", {
+        level: CONSOLE_LEVELS[msg.type()] ?? "log",
+        text: msg.text().slice(0, 2000),
+      });
+    });
+    const record = (req: import("@playwright/test").Request, failed: boolean) => {
+      if (!NET_TYPES.has(req.resourceType()) || netCount++ > 500) return;
+      let url: URL;
+      try {
+        url = new URL(req.url());
+      } catch {
+        return;
+      }
+      if (origin && url.origin !== origin) return;
+      const timing = req.timing();
+      void (failed ? Promise.resolve(null) : req.response())
+        .then((res) =>
+          line("__TQA_NET__", {
+            method: req.method(),
+            url: url.pathname.slice(0, 1000),
+            status: res ? res.status() : null,
+            durationMs: timing.responseEnd > 0 ? Math.round(timing.responseEnd) : null,
+            failed,
+          }),
+        )
+        .catch(() => undefined);
+    };
+    page.on("requestfinished", (req) => record(req, false));
+    page.on("requestfailed", (req) => record(req, true));
     await use(wrap(page, testInfo));
   },
   _traxionScreencast: [

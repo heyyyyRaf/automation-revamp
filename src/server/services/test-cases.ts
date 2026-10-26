@@ -14,6 +14,7 @@ import { badRequest, conflict, notFound } from "@/server/errors";
 import { safeCell } from "@/server/exports/test-scope";
 import { audit, changes } from "@/server/services/audit";
 import { allocateKeys } from "@/server/services/keys";
+import { withdrawScriptApproval } from "@/server/scripts/pipeline";
 
 interface Meta {
   ip: string;
@@ -289,6 +290,8 @@ export async function updateTestCase(
       data,
       include: TEST_CASE_INCLUDE,
     });
+    // The case changed, so its approved script may no longer match it: re-approve both.
+    const scriptWithdrawn = await withdrawScriptApproval(tx, existing.id);
     const diff = changes(existing, tc, AUDITED);
     await audit(
       {
@@ -301,6 +304,7 @@ export async function updateTestCase(
           key: existing.key,
           fields: Object.keys(input),
           previousStatus: existing.status,
+          ...(scriptWithdrawn ? { scriptApprovalWithdrawn: true } : {}),
           ...(options.metadata ?? {}),
         },
         ...(diff ?? {}),

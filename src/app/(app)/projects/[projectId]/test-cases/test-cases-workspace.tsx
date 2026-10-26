@@ -216,12 +216,11 @@ export function TestCasesWorkspace({
             <Button variant="secondary" onClick={() => setDownloading(true)}>
               <DownloadIcon /> Download
             </Button>
-            <Button disabled aria-describedby="scripts-later">
-              Generate and review scripts <ArrowRightIcon />
+            <Button asChild>
+              <Link href={`/projects/${projectId}/scripts`}>
+                Generate and review scripts <ArrowRightIcon />
+              </Link>
             </Button>
-            <span id="scripts-later" className="sr-only">
-              Scripts arrive in the next phase of the build.
-            </span>
           </>
         }
       />

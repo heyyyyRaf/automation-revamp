@@ -16,7 +16,7 @@ import {
   type RunnerInput,
 } from "@/server/sandbox/protocol";
 
-export type ControlCommand = "pause" | "resume" | "stop";
+export type ControlCommand = "pause" | "resume" | "stop" | "slow" | "normal";
 
 export interface SandboxSession {
   events: AsyncIterable<RunnerEvent>;
@@ -196,6 +196,8 @@ export async function* runInSandbox(run: SandboxRun): AsyncIterable<RunnerEvent>
 
 function scrubEvent(event: RunnerEvent, variants: string[]): RunnerEvent {
   switch (event.t) {
+    case "step-begin":
+      return { ...event, title: scrub(event.title, variants) };
     case "step-end":
       return {
         ...event,
@@ -203,7 +205,10 @@ function scrubEvent(event: RunnerEvent, variants: string[]): RunnerEvent {
         error: event.error && scrub(event.error, variants),
       };
     case "log":
+    case "console":
       return { ...event, text: scrub(event.text, variants) };
+    case "net":
+      return { ...event, url: scrub(event.url, variants) };
     case "test-end":
     case "done":
       return { ...event, error: event.error && scrub(event.error, variants) };

@@ -13,8 +13,17 @@ import { logger } from "@/server/logger";
 const env = getEnv();
 const log = logger.child({ service: "worker" });
 
-/** Concurrency per queue: AI calls are slow and costly, so few at a time. */
-const CONCURRENCY: Record<(typeof QUEUES)[number], number> = { documents: 2, ai: 2, exports: 2 };
+/**
+ * Concurrency per queue: AI calls are slow and costly, so few at a time. Each run itself
+ * uses up to 5 parallel browser sandboxes (NFR-8).
+ */
+const CONCURRENCY: Record<(typeof QUEUES)[number], number> = {
+  documents: 2,
+  ai: 2,
+  exports: 2,
+  browser: 2,
+  runs: 2,
+};
 
 const workers = QUEUES.map((queue) => {
   const worker = new Worker<{ jobId: string }>(

@@ -34,13 +34,26 @@ export type LiveEvent =
         hasScreenshot: boolean;
       };
     }
+  | { type: "step-begin"; runTestId: string; title: string; category: string }
   | { type: "frame"; runTestId: string; jpeg: string }
   | { type: "log"; runTestId: string | null; stream: "stdout" | "stderr"; text: string }
+  | { type: "console"; runTestId: string; level: string; text: string }
+  | {
+      type: "net";
+      runTestId: string;
+      method: string;
+      url: string;
+      status: number | null;
+      durationMs: number | null;
+      failed: boolean;
+    }
+  | { type: "speed"; slow: boolean }
   | { type: "paused" }
   | { type: "resumed" }
   | { type: "end"; status: string };
 
-export type RunControl = "pause" | "resume" | "stop";
+export type RunControl = "pause" | "resume" | "stop" | "slow" | "normal";
+const CONTROLS = new Set<string>(["pause", "resume", "stop", "slow", "normal"]);
 
 export interface RunBus {
   publish(runId: string, event: LiveEvent): Promise<void>;
@@ -85,7 +98,7 @@ class RedisRunBus implements RunBus {
 
   onControl(runId: string, handler: (c: RunControl) => void) {
     return this.listen(controlChannel(runId), (msg) => {
-      if (msg === "pause" || msg === "resume" || msg === "stop") handler(msg);
+      if (CONTROLS.has(msg)) handler(msg as RunControl);
     });
   }
 }

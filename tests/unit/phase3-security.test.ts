@@ -217,7 +217,11 @@ describe("egress proxy", () => {
 
 describe("sandbox protocol", () => {
   it("accepts only well-formed events and drops everything else", () => {
-    expect(parseEventLine('{"t":"test-begin","id":"abc"}')).toEqual({ t: "test-begin", id: "abc" });
+    expect(parseEventLine('{"t":"test-begin","id":"abc"}')).toEqual({
+      t: "test-begin",
+      id: "abc",
+      retry: 0,
+    });
     expect(parseEventLine('{"t":"rm -rf"}')).toBeNull();
     expect(parseEventLine("not json")).toBeNull();
     expect(

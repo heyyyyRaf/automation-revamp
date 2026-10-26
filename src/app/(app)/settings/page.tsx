@@ -2,9 +2,13 @@ import type { Metadata } from "next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { requireAuthPage } from "@/server/auth/current-user";
+import { listSharedEnvironments } from "@/server/services/environments";
 import { effectiveAiSettings } from "@/server/services/settings";
+import { listGlobalTargets, listPendingTargets } from "@/server/services/targets";
 import { listUsers } from "@/server/services/users";
 import { UsersManager } from "../admin/users/users-manager";
+import { EnvironmentsWorkspace } from "../projects/[projectId]/environments/environments-workspace";
+import { AddressesAdmin } from "./addresses-admin";
 import { AiSettingsForm } from "./ai-settings-form";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -12,7 +16,15 @@ export const metadata: Metadata = { title: "Settings" };
 export default async function SettingsPage() {
   const auth = await requireAuthPage();
   const isLead = can(auth.user.role, "settings:manage");
-  const [users, ai] = isLead ? await Promise.all([listUsers(), effectiveAiSettings()]) : [[], null];
+  const lead = isLead
+    ? await Promise.all([
+        listUsers(),
+        effectiveAiSettings(),
+        listPendingTargets(auth),
+        listGlobalTargets(auth),
+        listSharedEnvironments(auth),
+      ])
+    : null;
 
   return (
     <>
@@ -53,10 +65,30 @@ export default async function SettingsPage() {
                 Create accounts for your team. There is no public sign-up — only Admins add people.
               </p>
             </div>
-            <UsersManager initialUsers={users} currentUserId={auth.user.id} />
+            <UsersManager initialUsers={lead?.[0] ?? []} currentUserId={auth.user.id} />
           </section>
         )}
-        {ai && <AiSettingsForm initial={ai} />}
+        {lead && <AddressesAdmin pending={lead[2]} globalTargets={lead[3]} />}
+        {lead && (
+          <div id="shared-environments" className="flex flex-col gap-2">
+            <p className="text-muted text-sm">
+              Shared environments are created here and can be used by every project. Projects run
+              their check from their own Environments page.
+            </p>
+            <div className="flex">
+              <EnvironmentsWorkspace
+                projectId={null}
+                apiBase="/api/admin/environments"
+                environments={lead[4]}
+                targets={lead[3]}
+                canManage
+                canManageShared
+                title="Shared environments"
+              />
+            </div>
+          </div>
+        )}
+        {lead && <AiSettingsForm initial={lead[1]} />}
       </div>
     </>
   );

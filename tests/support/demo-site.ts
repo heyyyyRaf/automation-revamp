@@ -69,6 +69,11 @@ export async function startDemoSite(): Promise<DemoSite> {
       if (!cookie.includes("session=ok")) return html(302, "", { location: "/login" });
       return html(200, page("Account", `<h1>Welcome back</h1>`));
     }
+    if (url.pathname === "/api/items") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ items: [] }));
+      return;
+    }
     if (url.pathname === "/cart") {
       return html(
         200,
@@ -76,7 +81,7 @@ export async function startDemoSite(): Promise<DemoSite> {
           "Cart",
           `<h1>Your cart</h1><p id="count">Items: 0</p>
            <button data-testid="add-item" onclick="document.getElementById('count').textContent='Items: '+(++window.n||(window.n=1))">Add to cart</button>
-           <script>window.n=0</script>`,
+           <script>window.n=0;console.log("cart ready");fetch("/api/items?token=QUERY-SECRET-123")</script>`,
         ),
       );
     }

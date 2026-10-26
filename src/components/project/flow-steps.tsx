@@ -13,10 +13,10 @@ export function FlowSteps({ projectId, current }: { projectId: string; current: 
     `${base}/requirements`,
     `${base}/test-cases`,
     `${base}/test-cases`,
-    null, // Environment, Scripts, Run and Report screens arrive with Phase 3 / 4.
-    null,
-    null,
-    null,
+    `${base}/environments`,
+    `${base}/scripts`,
+    `${base}/runs`,
+    null, // the Report screen arrives with Phase 4
   ];
   return (
     <ol

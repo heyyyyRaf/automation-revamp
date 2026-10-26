@@ -35,8 +35,20 @@ export default class TraxionReporter implements Reporter {
     return true;
   }
 
-  onTestBegin(test: TestCase): void {
-    emit({ t: "test-begin", id: idOf(test) });
+  onTestBegin(test: TestCase, result: TestResult): void {
+    emit({ t: "test-begin", id: idOf(test), retry: result.retry });
+  }
+
+  onStepBegin(test: TestCase, _result: TestResult, step: TestStep): void {
+    if (!STEP_CATEGORIES.has(step.category)) return;
+    const file = step.location?.file ?? "";
+    if (step.category === "pw:api" && (!file || file.includes("node_modules"))) return;
+    emit({
+      t: "step-begin",
+      id: idOf(test),
+      title: step.title.slice(0, 1000),
+      category: step.category,
+    });
   }
 
   onStepEnd(test: TestCase, _result: TestResult, step: TestStep): void {
@@ -61,6 +73,16 @@ export default class TraxionReporter implements Reporter {
       if (!line) continue;
       if (line.startsWith("__TQA_FRAME__")) {
         if (id) emit({ t: "frame", id, jpeg: line.slice("__TQA_FRAME__".length) });
+      } else if (line.startsWith("__TQA_CONSOLE__") || line.startsWith("__TQA_NET__")) {
+        const console = line.startsWith("__TQA_CONSOLE__");
+        try {
+          const data = JSON.parse(
+            line.slice((console ? "__TQA_CONSOLE__" : "__TQA_NET__").length),
+          ) as Record<string, unknown>;
+          if (id) emit({ ...data, t: console ? "console" : "net", id });
+        } catch {
+          // malformed line: drop it
+        }
       } else {
         emit({ t: "log", id, stream: "stdout", text: line.slice(0, 4000) });
       }
@@ -80,6 +102,7 @@ export default class TraxionReporter implements Reporter {
       t: "test-end",
       id,
       status: result.status,
+      retry: result.retry,
       durationMs: Math.max(0, Math.round(result.duration)),
       error: errorText(result),
     });

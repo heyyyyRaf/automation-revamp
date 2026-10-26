@@ -22,6 +22,8 @@ const base = () => ({
   accounts: { "Standard user": DEMO_USER },
   vars: { SHOP_NAME: "Demo Shop" },
   testTimeoutMs: 30_000,
+  retries: 0,
+  slowMoMs: 0,
   tests: [],
 });
 
@@ -46,7 +48,7 @@ describe("capture", () => {
       sessionId: "capture-test-1",
       label: "test",
       origins: origins(),
-      input: { ...base(), mode: "capture", capture: { path: "/login" } },
+      input: { ...base(), mode: "capture", capture: { paths: ["/login"] } },
       timeoutMs: 60_000,
     });
     const cap = events.find((e) => e.t === "capture");
@@ -61,6 +63,24 @@ describe("capture", () => {
       ]),
     );
     expect(cap.screenshot?.length).toBeGreaterThan(1000);
+  });
+});
+
+describe("multi-page capture", () => {
+  it("captures every page of the flow and skips one that fails", async () => {
+    const events = await collect({
+      sessionId: "capture-test-2",
+      label: "test",
+      origins: origins(),
+      input: { ...base(), mode: "capture", capture: { paths: ["/", "/cart"] } },
+      timeoutMs: 60_000,
+    });
+    const caps = events.filter((e) => e.t === "capture");
+    expect(caps.map((c) => (c.t === "capture" ? c.snapshot.title : ""))).toEqual([
+      "Demo Shop",
+      "Cart",
+    ]);
+    expect(events.find((e) => e.t === "done")).toMatchObject({ ok: true });
   });
 });
 
@@ -261,5 +281,60 @@ test("TC-005 forever", async ({ page }) => {
     expect(Date.now() - started).toBeLessThan(60_000);
     expect(events.some((e) => e.t === "test-end" && e.status === "passed")).toBe(false);
     expect(events.at(-1)).toMatchObject({ t: "exit" });
+  });
+});
+
+describe("run extras", () => {
+  const consoleAndNet = `import { test, expect } from "./traxion";
+test("TC-003 cart loads", async ({ page }) => {
+  await page.goto("/cart");
+  await expect(page.getByText("Items: 0")).toBeVisible();
+});
+`;
+  const flaky = `import { test, expect } from "./traxion";
+test("TC-004 always fails", async ({ page }) => {
+  await page.goto("/cart");
+  await expect(page.getByText("Never there")).toBeVisible({ timeout: 1000 });
+});
+`;
+
+  it("records the browser console and same-origin requests, without query strings", async () => {
+    const events = await collect({
+      sessionId: "run-test-extras-1",
+      label: "test",
+      origins: origins(),
+      input: {
+        ...base(),
+        mode: "run",
+        tests: [{ id: "cccccccccccccccccccccccc", code: consoleAndNet }],
+      },
+      timeoutMs: 120_000,
+    });
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ t: "console", level: "log", text: "cart ready" }),
+        expect.objectContaining({ t: "net", method: "GET", url: "/api/items", status: 200 }),
+      ]),
+    );
+    expect(JSON.stringify(events)).not.toContain("QUERY-SECRET-123");
+  });
+
+  it("retries a failed test the configured number of times", async () => {
+    const events = await collect({
+      sessionId: "run-test-extras-2",
+      label: "test",
+      origins: origins(),
+      input: {
+        ...base(),
+        mode: "run",
+        retries: 1,
+        tests: [{ id: "dddddddddddddddddddddddd", code: flaky }],
+      },
+      timeoutMs: 120_000,
+    });
+    const begins = events.filter((e) => e.t === "test-begin");
+    expect(begins.map((b) => (b.t === "test-begin" ? b.retry : -1))).toEqual([0, 1]);
+    const ends = events.filter((e) => e.t === "test-end");
+    expect(ends.at(-1)).toMatchObject({ status: "failed", retry: 1 });
   });
 });

@@ -9,10 +9,14 @@ export const QUEUE_FOR_TYPE: Partial<Record<JobType, string>> = {
   ANALYZE_REQUIREMENTS: "ai",
   GENERATE_TEST_CASES: "ai",
   REWRITE_TEST_CASE: "ai",
+  GENERATE_SCRIPT: "ai",
+  FIX_SCRIPT: "ai",
+  VERIFY_LOGIN: "browser",
+  EXECUTE_RUN: "runs",
   EXPORT: "exports",
 };
 
-export const QUEUES = ["documents", "ai", "exports"] as const;
+export const QUEUES = ["documents", "ai", "exports", "browser", "runs"] as const;
 
 export interface DispatchRequest {
   jobId: string;

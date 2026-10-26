@@ -288,7 +288,10 @@ export async function getProjectOverview(auth: AuthContext, projectId: string) {
           status: { in: ["APPROVED", "SCRIPTED", "PASSED", "FAILED", "ERROR"] },
         },
       }),
-      db.environment.count({ where: { projectId } }),
+      // Step 5 is done once an environment this project can use has been verified.
+      db.environment.count({
+        where: { OR: [{ projectId }, { projectId: null }], verifiedAt: { not: null } },
+      }),
       db.script.count({ where: { projectId, status: "APPROVED" } }),
       db.run.count({ where: { projectId, status: { in: ["PASSED", "FAILED"] } } }),
     ]);

@@ -6,6 +6,7 @@ import { db } from "@/server/db";
 import { conflict, notFound } from "@/server/errors";
 import { enqueueJob } from "@/server/jobs/enqueue";
 import { audit } from "@/server/services/audit";
+import { assertBudgetLeft, assertNotRunning } from "@/server/services/job-guards";
 import { isValidId } from "@/server/authz/guards";
 import { rewriteOutputSchema } from "@/server/ai/tasks/generation";
 import { updateTestCase, type TestCaseDto } from "@/server/services/test-cases";
@@ -28,27 +29,6 @@ export const JOB_PUBLIC_SELECT = {
   startedAt: true,
   finishedAt: true,
 } as const;
-
-/** One analysis / generation at a time per project, so results never interleave. */
-async function assertNotRunning(projectId: string, type: JobType): Promise<void> {
-  const active = await db.job.findFirst({
-    where: { projectId, type, status: { in: ["QUEUED", "RUNNING"] } },
-  });
-  if (active) {
-    throw conflict(
-      type === "ANALYZE_REQUIREMENTS"
-        ? "An analysis is already running for this project. Please wait for it to finish."
-        : "Test case generation is already running for this project. Please wait for it to finish.",
-    );
-  }
-}
-
-async function assertBudgetLeft(projectId: string): Promise<void> {
-  const budget = await getAiBudget(projectId);
-  if (budget.remaining <= 0) {
-    throw conflict("This project has used its monthly AI limit. Ask an Admin to raise it.");
-  }
-}
 
 /** Analysis reads extracted text, so every file must have been read first. */
 async function assertFilesRead(projectId: string): Promise<void> {

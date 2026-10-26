@@ -133,12 +133,94 @@ export async function decideTarget(
   return updated;
 }
 
-/** The approved target an environment points at, or a clear error if it was revoked. */
-export async function requireApprovedTarget(projectId: string, baseUrl: string) {
+/** All addresses waiting for the Lead, across projects (Settings → Addresses). */
+export async function listPendingTargets(auth: AuthContext) {
+  requirePermission(auth, "targets:approve");
+  const rows = await db.allowedTarget.findMany({
+    where: { status: "PENDING", projectId: { not: null } },
+    orderBy: { createdAt: "asc" },
+    select: { ...TARGET_SELECT, project: { select: { id: true, name: true } } },
+  });
+  return Promise.all(rows.map(async (t) => ({ ...t, network: await networkHint(t.origin) })));
+}
+
+// ── Global addresses: added by the Lead for shared environments (NFR-3) ──────
+
+export async function listGlobalTargets(auth: AuthContext) {
+  requirePermission(auth, "projects:read");
+  const rows = await db.allowedTarget.findMany({
+    where: { projectId: null },
+    orderBy: { createdAt: "asc" },
+    select: TARGET_SELECT,
+  });
+  return Promise.all(rows.map(async (t) => ({ ...t, network: await networkHint(t.origin) })));
+}
+
+/** The Lead approves by adding: a global address is approved from the start. */
+export async function addGlobalTarget(
+  auth: AuthContext,
+  input: { url: string; allowPrivateNetwork: boolean; note?: string | undefined },
+  meta: Meta,
+) {
+  requirePermission(auth, "targets:approve");
+  const origin = normalizeOrigin(input.url);
+  if (!origin) throw badRequest("Enter a web address like https://staging.example.com.");
+  if ((await networkHint(origin)) === "blocked") {
+    throw badRequest(
+      "This address points to a reserved or metadata network and can never be tested.",
+    );
+  }
+  const existing = await db.allowedTarget.findFirst({ where: { projectId: null, origin } });
+  const data = {
+    status: "APPROVED" as const,
+    allowPrivateNetwork: input.allowPrivateNetwork,
+    requestedById: auth.user.id,
+    decidedById: auth.user.id,
+    decidedAt: new Date(),
+    note: input.note ?? null,
+  };
+  const target = existing
+    ? await db.allowedTarget.update({ where: { id: existing.id }, data })
+    : await db.allowedTarget.create({ data: { origin, ...data } });
+  await audit({
+    action: "target.approve",
+    entityType: "allowed_target",
+    entityId: target.id,
+    actorId: auth.user.id,
+    metadata: { origin, global: true, allowPrivateNetwork: input.allowPrivateNetwork },
+    ipAddress: meta.ip,
+    requestId: meta.requestId,
+  });
+  return target;
+}
+
+export async function revokeGlobalTarget(auth: AuthContext, targetId: string, meta: Meta) {
+  requirePermission(auth, "targets:approve");
+  if (!isValidId(targetId)) throw notFound("Address");
+  const target = await db.allowedTarget.findFirst({ where: { id: targetId, projectId: null } });
+  if (!target) throw notFound("Address");
+  await db.allowedTarget.update({
+    where: { id: target.id },
+    data: { status: "REVOKED", decidedById: auth.user.id, decidedAt: new Date() },
+  });
+  await audit({
+    action: "target.revoke",
+    entityType: "allowed_target",
+    entityId: target.id,
+    actorId: auth.user.id,
+    metadata: { origin: target.origin, global: true },
+    ipAddress: meta.ip,
+    requestId: meta.requestId,
+  });
+}
+
+/**
+ * The approved target an environment points at, or a clear error if it was revoked.
+ * `projectId` null = a shared environment, which uses the Lead's global addresses.
+ */
+export async function requireApprovedTarget(projectId: string | null, baseUrl: string) {
   const origin = normalizeOrigin(baseUrl);
-  const target = origin
-    ? await db.allowedTarget.findUnique({ where: { projectId_origin: { projectId, origin } } })
-    : null;
+  const target = origin ? await db.allowedTarget.findFirst({ where: { projectId, origin } }) : null;
   if (!target || target.status !== "APPROVED") {
     throw conflict(
       "This environment's address is not approved (or approval was revoked). Ask an Admin.",

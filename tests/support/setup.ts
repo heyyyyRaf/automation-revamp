@@ -13,6 +13,9 @@ Object.assign(process.env, {
   S3_SECRET_ACCESS_KEY: "test-secret",
   S3_BUCKET: "test-bucket",
   JOB_TIMEOUT_SECONDS: "30",
+  // Test-only key ring for credentials at rest.
+  CREDENTIALS_ENCRYPTION_KEYS: `1:${Buffer.alloc(32, 7).toString("base64")}`,
+  SANDBOX_MODE: "local",
 });
 
 const { resetEnvCache } = await import("@/server/env");
@@ -23,6 +26,8 @@ const { db } = await import("@/server/db");
 const { setAIProvider } = await import("@/server/ai/provider");
 const { FakeProvider } = await import("@/server/ai/fake-provider");
 const { setFigmaFetch } = await import("@/server/figma/figma");
+const { setRunBus, MemoryRunBus } = await import("@/server/runs/bus");
+const { resetSettingsCache } = await import("@/server/services/settings");
 
 resetEnvCache();
 
@@ -31,6 +36,8 @@ beforeEach(async () => {
   setDispatcher(new RecordingDispatcher());
   useInMemoryLoginLimiters();
   setAIProvider(new FakeProvider());
+  setRunBus(new MemoryRunBus());
+  resetSettingsCache();
   // No real network calls from tests: Figma tests install their own fake.
   setFigmaFetch((async () => {
     throw new Error("unexpected network call in test");

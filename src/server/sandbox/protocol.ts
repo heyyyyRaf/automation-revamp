@@ -27,11 +27,18 @@ export const runnerInputSchema = z.object({
   accounts: z.record(z.string(), z.object({ username: z.string(), password: z.string() })),
   vars: z.record(z.string(), z.string()),
   testTimeoutMs: z.number().int().min(1000).max(1_800_000),
+  /** FR-8.4: retries per failed test. */
+  retries: z.number().int().min(0).max(3).default(0),
+  /** Design "Slow motion": pause between browser actions. */
+  slowMoMs: z.number().int().min(0).max(2000).default(0),
   tests: z
     .array(z.object({ id: z.string().regex(/^[a-z0-9]{10,40}$/), code: z.string().max(200_000) }))
     .max(500)
     .default([]),
-  capture: z.object({ path: z.string().startsWith("/").max(2000) }).optional(),
+  /** FRD step 4: capture each page of the flow (up to 5). */
+  capture: z
+    .object({ paths: z.array(z.string().startsWith("/").max(2000)).min(1).max(5) })
+    .optional(),
   login: loginConfigSchema.extend({ account: z.string() }).optional(),
 });
 export type RunnerInput = z.infer<typeof runnerInputSchema>;
@@ -61,7 +68,9 @@ export type DomSnapshotData = z.infer<typeof domSnapshotSchema>;
 
 export const runnerEventSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("ready") }),
-  z.object({ t: z.literal("test-begin"), id }),
+  z.object({ t: z.literal("test-begin"), id, retry: z.number().int().min(0).max(3).default(0) }),
+  /** A script action started (Live Run: "Looking for …"). */
+  z.object({ t: z.literal("step-begin"), id, title: text(1000), category: text(40) }),
   z.object({
     t: z.literal("step-end"),
     id,
@@ -77,9 +86,27 @@ export const runnerEventSchema = z.discriminatedUnion("t", [
     stream: z.enum(["stdout", "stderr"]),
     text: text(4000),
   }),
+  /** Browser console message (FR-8.3 console log). */
+  z.object({
+    t: z.literal("console"),
+    id,
+    level: z.enum(["log", "info", "warning", "error", "debug"]),
+    text: text(2000),
+  }),
+  /** A finished page/API request (design: Network tab). Same-origin paths only. */
+  z.object({
+    t: z.literal("net"),
+    id,
+    method: text(10),
+    url: text(1000),
+    status: z.number().int().min(0).max(999).nullable(),
+    durationMs: z.number().int().min(0).nullable(),
+    failed: z.boolean(),
+  }),
   z.object({
     t: z.literal("test-end"),
     id,
+    retry: z.number().int().min(0).max(3).default(0),
     status: z.enum(["passed", "failed", "timedOut", "skipped", "interrupted"]),
     durationMs: z.number().int().min(0),
     error: text(8000).nullable(),

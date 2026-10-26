@@ -241,6 +241,13 @@ export const targetRequestSchema = z.object({
   note: z.string().trim().max(500).optional(),
 });
 
+/** The Lead adds an approved address for shared environments (NFR-3). */
+export const globalTargetSchema = z.object({
+  url: z.url({ protocol: /^https?$/, message: "Enter an http:// or https:// address." }).max(500),
+  allowPrivateNetwork: z.boolean().default(false),
+  note: z.string().trim().max(500).optional(),
+});
+
 export const targetDecisionSchema = z.object({
   decision: z.enum(["APPROVE", "REVOKE"]),
   allowPrivateNetwork: z.boolean().default(false),
@@ -296,31 +303,47 @@ export const accountUpdateSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, "Nothing to update.");
 
+/** FR-6.1: scripts for the chosen approved, automatable cases (default: all without one). */
 export const scriptGenerateSchema = z.object({
-  testCaseId: ID,
+  testCaseIds: z.array(ID).min(1).max(200).optional(),
   environmentId: ID,
   startPath: z.string().trim().startsWith("/", "Start with /").max(500).default("/"),
 });
 
+/** FR-6.3: the tester's edited script becomes a new version. */
 export const scriptVersionCreateSchema = z.object({
   code: z.string().min(1).max(100_000),
 });
 
+/** Design "Ask AI to fix": optional instruction and/or a failed run to learn from. */
 export const scriptFixSchema = z.object({
-  versionId: ID,
   instruction: z.string().trim().max(2000).optional(),
+  runTestId: ID.optional(),
 });
-
-export const scriptAcceptFixSchema = z.object({ jobId: ID });
 
 export const scriptApproveSchema = z.object({
   versionId: ID,
   decision: z.enum(["APPROVE", "REVOKE"]).default("APPROVE"),
 });
 
+/** FR-8.1: which approved, scripted cases to run. */
+export const runSelectionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("all") }),
+  z.object({ kind: z.literal("scenario"), scenarioId: ID }),
+  z.object({ kind: z.literal("tag"), tag: TAG }),
+  z.object({ kind: z.literal("cases"), testCaseIds: z.array(ID).min(1).max(500) }),
+]);
+
 export const runCreateSchema = z.object({
   environmentId: ID,
-  testCaseIds: z.array(ID).min(1).max(500).optional(),
+  selection: runSelectionSchema.default({ kind: "all" }),
+  /** FR-8.4: per-test timeout and retry count. */
+  timeoutSeconds: z.coerce.number().int().min(10).max(600).default(120),
+  retries: z.coerce.number().int().min(0).max(3).default(0),
+  /** Design "Slow motion": start the run slowed down. */
+  slowMotion: z.boolean().default(false),
 });
 
-export const runControlSchema = z.object({ action: z.enum(["pause", "resume", "stop"]) });
+export const runControlSchema = z.object({
+  action: z.enum(["pause", "resume", "stop", "slow", "normal"]),
+});

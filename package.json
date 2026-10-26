@@ -32,7 +32,6 @@
     "@aws-sdk/client-s3": "3.1156.0",
     "@fontsource-variable/plus-jakarta-sans": "5.3.0",
     "@fontsource/jetbrains-mono": "5.3.0",
-    "@monaco-editor/react": "4.7.0",
     "@napi-rs/canvas": "1.0.13",
     "@node-rs/argon2": "2.2.2",
     "@playwright/test": "1.64.1",
@@ -49,7 +48,6 @@
     "ioredis": "5.11.1",
     "lucide-react": "1.61.0",
     "mammoth": "1.13.0",
-    "monaco-editor": "0.57.0",
     "next": "16.4.2",
     "openai": "7.43.0",
     "papaparse": "5.7.0",
@@ -99,8 +97,5 @@
     "unrs-resolver@1.12.2": true,
     "tesseract.js": false,
     "msgpackr-extract": false
-  },
-  "overrides": {
-    "dompurify": "3.4.17"
   }
 }

@@ -157,7 +157,7 @@ async function startSession(req: http.IncomingMessage, res: http.ServerResponse)
 
 async function control(runId: string, req: http.IncomingMessage, res: http.ServerResponse) {
   const { command } = z
-    .object({ command: z.enum(["pause", "resume", "stop"]) })
+    .object({ command: z.enum(["pause", "resume", "stop", "slow", "normal"]) })
     .parse(JSON.parse(await readBody(req, 1000)));
   const session = sessions.get(runId);
   if (!session) {

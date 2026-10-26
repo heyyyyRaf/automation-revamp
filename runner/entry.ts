@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { chromium, type Browser } from "@playwright/test";
+import { chromium, type Browser, type Page } from "@playwright/test";
 import {
   runnerInputSchema,
   scrub,
@@ -32,6 +32,8 @@ const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MAX_ARTIFACT_BYTES = 30 * 1024 * 1024;
 const CHUNK = 300_000;
+/** Delay before each action in slow motion. */
+const SLOW_MO_MS = 800;
 
 let variants: string[] = [];
 /** Base64 payloads and the session state are passed through untouched; all text is scrubbed. */
@@ -106,6 +108,7 @@ async function runTests(
     writeFileSync(storageState, input.storageState, { mode: 0o600 });
   }
   for (const t of input.tests) writeFileSync(join(dir, "tests", `${t.id}.spec.ts`), t.code);
+  if (input.slowMoMs > 0) writeFileSync(join(dir, "speed"), String(input.slowMoMs));
 
   // Scripts resolve "@playwright/test" from the runner's own installation.
   const pkg = require.resolve("@playwright/test/package.json");
@@ -116,7 +119,7 @@ async function runTests(
     testDir: "./tests",
     outputDir: "./test-results",
     timeout: input.testTimeoutMs,
-    retries: 0,
+    retries: input.retries,
     workers: 1,
     fullyParallel: false,
     reporter: [[join(HERE, "reporter.mjs")]],
@@ -236,6 +239,8 @@ async function handleControl(
     if (cmd === "pause" || cmd === "resume") {
       writeFileSync(join(dir, "control"), cmd);
       emit({ t: cmd === "pause" ? "paused" : "resumed" });
+    } else if (cmd === "slow" || cmd === "normal") {
+      writeFileSync(join(dir, "speed"), cmd === "slow" ? String(SLOW_MO_MS) : "0");
     } else if (cmd === "stop") {
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 5000).unref();
@@ -267,7 +272,7 @@ function streamArtifact(a: { id: string; kind: string; path: string }): void {
 
 async function withPage<T>(
   input: RunnerInput,
-  fn: (page: import("@playwright/test").Page, browser: Browser) => Promise<T>,
+  fn: (page: Page, browser: Browser) => Promise<T>,
 ): Promise<T> {
   const browser = await chromium.launch({ headless: true, proxy: proxyOption(input) });
   try {
@@ -285,25 +290,42 @@ async function withPage<T>(
   }
 }
 
+/** Captures each page of the flow (FRD step 4). A page that fails is skipped, not fatal. */
 async function capture(input: RunnerInput): Promise<void> {
-  const path = input.capture?.path ?? "/";
+  const paths = input.capture?.paths ?? ["/"];
+  let captured = 0;
+  let lastError: string | null = null;
   await withPage(input, async (page) => {
-    await page.goto(path, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
-    const aria = (await page.ariaSnapshot({ timeout: 10_000 }).catch(() => "")).slice(0, 80_000);
-    const elements = (await page.evaluate(collectElements)).slice(0, 600);
-    const shot = await page.screenshot({ type: "jpeg", quality: 60 }).catch(() => null);
-    emit({
-      t: "capture",
-      snapshot: {
-        url: page.url().slice(0, 2000),
-        title: (await page.title()).slice(0, 500),
-        aria,
-        elements,
-      },
-      screenshot: shot ? shot.toString("base64") : null,
-    });
-    emit({ t: "done", ok: true, error: null });
+    for (const path of paths) {
+      try {
+        await page.goto(path, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
+        const aria = (await page.ariaSnapshot({ timeout: 10_000 }).catch(() => "")).slice(
+          0,
+          80_000,
+        );
+        const elements = (await page.evaluate(collectElements)).slice(0, 600);
+        const shot = await page.screenshot({ type: "jpeg", quality: 60 }).catch(() => null);
+        emit({
+          t: "capture",
+          snapshot: {
+            url: page.url().slice(0, 2000),
+            title: (await page.title()).slice(0, 500),
+            aria,
+            elements,
+          },
+          screenshot: shot ? shot.toString("base64") : null,
+        });
+        captured++;
+      } catch (err) {
+        lastError = err instanceof Error ? (err.message.split("\n")[0] ?? "") : "Page failed";
+      }
+    }
+  });
+  emit({
+    t: "done",
+    ok: captured > 0,
+    error: captured > 0 ? null : (lastError ?? "No page could be opened.").slice(0, 2000),
   });
 }
 

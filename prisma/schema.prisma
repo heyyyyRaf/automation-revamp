@@ -580,7 +580,8 @@ enum ApprovalStatus {
 /// Origins a project may target. Only a system ADMIN can approve.
 model AllowedTarget {
   id                  String         @id @default(cuid())
-  projectId           String
+  /// Null = a global address approved by the Lead, usable by shared environments.
+  projectId           String?
   origin              String // normalized "https://app.example.com" (scheme + host + port)
   allowPrivateNetwork Boolean        @default(false) // permit RFC1918/loopback resolution
   status              ApprovalStatus @default(PENDING)
@@ -590,9 +591,9 @@ model AllowedTarget {
   note                String?
   createdAt           DateTime       @default(now())
 
-  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  requestedBy User    @relation("AllowedTargetRequestedBy", fields: [requestedById], references: [id])
-  decidedBy   User?   @relation("AllowedTargetDecidedBy", fields: [decidedById], references: [id])
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User     @relation("AllowedTargetRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User?    @relation("AllowedTargetDecidedBy", fields: [decidedById], references: [id])
 
   @@unique([projectId, origin])
 }
@@ -604,8 +605,9 @@ enum LoginCheckStatus {
 }
 
 model Environment {
-  id          String @id @default(cuid())
-  projectId   String
+  id          String  @id @default(cuid())
+  /// Null = a shared environment created by the Lead, usable by every project.
+  projectId   String?
   name        String // "Staging", "UAT"
   baseUrl     String // must match an APPROVED AllowedTarget origin
   variables   Json? // non-secret key/values
@@ -615,13 +617,16 @@ model Environment {
   loginCheckStatus LoginCheckStatus @default(NOT_CHECKED)
   loginCheckedAt   DateTime?
   loginCheckError  String?
+  /// FRD verified_at: last successful check (reachable, and signed in when login is set).
+  /// Null = \"Unverified\": runs are blocked until a check passes.
+  verifiedAt       DateTime?
   /// Encrypted Playwright storageState in S3 (AES-256-GCM before upload).
   storageStateKey  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   accounts     TestAccount[]
   domSnapshots DomSnapshot[]
   runs         Run[]
@@ -671,6 +676,8 @@ model Script {
   approvedVersionId String?      @unique
   approvedById      String?
   approvedAt        DateTime?
+  /// FRD: compile error → regenerate once, then \"Script needs edit\".
+  needsEdit         Boolean      @default(false)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -726,6 +733,7 @@ enum RunStatus {
   FAILED // at least one test failed
   ERROR // infrastructure error
   CANCELLED
+  ABORTED // the worker crashed; finished results are kept
 }
 
 enum TestResultStatus {
@@ -738,21 +746,30 @@ enum TestResultStatus {
 }
 
 model Run {
-  id            String    @id @default(cuid())
-  projectId     String
-  environmentId String
-  status        RunStatus @default(QUEUED)
-  triggeredById String
-  startedAt     DateTime?
-  finishedAt    DateTime?
-  passedCount   Int       @default(0)
-  failedCount   Int       @default(0)
-  errorCount    Int       @default(0)
-  skippedCount  Int       @default(0)
-  jobId         String?
-  error         String? // user-safe message for infrastructure errors
-  pausedAt      DateTime?
-  createdAt     DateTime  @default(now())
+  id             String    @id @default(cuid())
+  projectId      String
+  environmentId  String
+  status         RunStatus @default(QUEUED)
+  triggeredById  String
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  passedCount    Int       @default(0)
+  failedCount    Int       @default(0)
+  errorCount     Int       @default(0)
+  skippedCount   Int       @default(0)
+  jobId          String?
+  error          String? // user-safe message for infrastructure errors
+  pausedAt       DateTime?
+  /// FR-8.4: per-test timeout and retry count.
+  timeoutSeconds Int       @default(120)
+  retries        Int       @default(0)
+  /// Design \"Slow motion\": delay between actions, in ms.
+  slowMoMs       Int       @default(0)
+  /// FR-8.1: what was selected — { kind: \"all\" | \"scenario\" | \"tag\" | \"cases\", value? }.
+  selection      Json?
+  /// NFR-8: parallel browser workers used.
+  workers        Int       @default(1)
+  createdAt      DateTime  @default(now())
 
   project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   environment Environment @relation(fields: [environmentId], references: [id])
@@ -782,6 +799,11 @@ model RunTest {
   traceKey        String?
   logKey          String?
   screenshotKey   String? // final/failure screenshot
+  /// Attempts made (1 + retries used).
+  attempts        Int              @default(0)
+  /// FR-8.3 console log and the design's Network tab (JSON in object storage).
+  consoleKey      String?
+  networkKey      String?
 
   // Phase 4 — AI failure analysis
   likelyCause      FailureCause?
