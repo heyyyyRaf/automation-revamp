@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
-import type { createUserSchema, updateUserSchema } from "@/lib/validation";
+import type { changePasswordSchema, createUserSchema, updateUserSchema } from "@/lib/validation";
 import { getDummyHash, hashPassword, verifyPassword } from "@/server/auth/password";
 import {
   assertLoginAllowed,
@@ -10,11 +10,12 @@ import {
 import {
   createSession,
   deleteAllSessionsForUser,
+  type AuthContext,
   type NewSession,
   type SessionUser,
 } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { AppError, badRequest, conflict, notFound } from "@/server/errors";
+import { AppError, badRequest, conflict, notFound, validationError } from "@/server/errors";
 import { audit } from "@/server/services/audit";
 
 /** Columns safe to return to clients. Never includes passwordHash. */
@@ -118,6 +119,42 @@ export async function createUser(
     }
     throw e;
   }
+}
+
+/**
+ * A signed-in user changes their own password. The current password is required (and wrong
+ * guesses count towards the login rate limit); every other session is signed out.
+ */
+export async function changeOwnPassword(
+  auth: AuthContext,
+  input: z.infer<typeof changePasswordSchema>,
+  meta: Meta,
+): Promise<void> {
+  await assertLoginAllowed(auth.user.email, meta.ip);
+  const user = await db.user.findUnique({ where: { id: auth.user.id } });
+  if (!user || !user.isActive) throw notFound("User");
+  if (!(await verifyPassword(user.passwordHash, input.currentPassword))) {
+    await recordLoginFailure(auth.user.email, meta.ip);
+    throw validationError("Your current password is incorrect.", {
+      fields: { currentPassword: ["Your current password is incorrect."] },
+    });
+  }
+  const passwordHash = await hashPassword(input.newPassword);
+  await db.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await tx.session.deleteMany({ where: { userId: user.id, id: { not: auth.sessionId } } });
+    await audit(
+      {
+        action: "user.password_change",
+        entityType: "user",
+        entityId: user.id,
+        actorId: user.id,
+        ipAddress: meta.ip,
+        requestId: meta.requestId,
+      },
+      tx,
+    );
+  });
 }
 
 export async function updateUser(

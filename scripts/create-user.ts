@@ -22,7 +22,9 @@ async function main(): Promise<void> {
   });
   if (!parsed.success) {
     console.error("Invalid input:", JSON.stringify(parsed.error.flatten().fieldErrors));
-    console.error("Set TRAXION_NEW_PASSWORD (min 12 chars) and pass --email, --name, --role.");
+    console.error(
+      "Set TRAXION_NEW_PASSWORD (8+ chars, a capital letter, a number and a special character) and pass --email, --name, --role.",
+    );
     process.exitCode = 1;
     return;
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as loginRoute from "@/app/api/auth/login/route";
 import * as logoutRoute from "@/app/api/auth/logout/route";
 import * as meRoute from "@/app/api/auth/me/route";
+import * as passwordRoute from "@/app/api/auth/password/route";
 import * as projectsRoute from "@/app/api/projects/route";
 import * as userRoute from "@/app/api/admin/users/[userId]/route";
 import { db } from "@/server/db";
@@ -186,5 +187,61 @@ describe("CSRF and origin checks", () => {
     const res = await call(meRoute.GET, "/");
     expect(res.headers.get("x-request-id")).toMatch(/[0-9a-f-]{36}/);
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("change my password", () => {
+  const NEW = "N3w-Password!";
+
+  it("needs the current password, enforces the rules and signs out other sessions", async () => {
+    const user = await createUser("QA_TESTER");
+    const here = await login(user.email);
+    const elsewhere = await login(user.email);
+
+    const wrong = await call(passwordRoute.POST, "/", {
+      session: here,
+      json: { currentPassword: "not-my-password", newPassword: NEW },
+    });
+    expect(wrong.status).toBe(422);
+    const weak = await call(passwordRoute.POST, "/", {
+      session: here,
+      json: { currentPassword: PASSWORD, newPassword: "alllowercase1!" },
+    });
+    expect(weak.status).toBe(422);
+    const same = await call(passwordRoute.POST, "/", {
+      session: here,
+      json: { currentPassword: PASSWORD, newPassword: PASSWORD },
+    });
+    expect(same.status).toBe(422);
+
+    const ok = await call(passwordRoute.POST, "/", {
+      session: here,
+      json: { currentPassword: PASSWORD, newPassword: NEW },
+    });
+    expect(ok.status).toBe(200);
+    // This session stays; the other one is signed out.
+    expect((await call(meRoute.GET, "/", { session: here })).status).toBe(200);
+    expect((await call(meRoute.GET, "/", { session: elsewhere })).status).toBe(401);
+    // Old password no longer works; the new one does.
+    await expect(login(user.email)).rejects.toThrow(/401/);
+    expect((await login(user.email, NEW)).userId).toBe(user.id);
+    const log = await db.auditLog.findFirstOrThrow({
+      where: { action: "user.password_change", entityId: user.id },
+    });
+    expect(JSON.stringify(log)).not.toContain(NEW);
+  });
+
+  it("requires a signed-in user and the CSRF token", async () => {
+    const anon = await call(passwordRoute.POST, "/", {
+      json: { currentPassword: PASSWORD, newPassword: NEW },
+    });
+    expect(anon.status).toBe(401);
+    const { session } = await userWithSession("VIEWER");
+    const noCsrf = await call(passwordRoute.POST, "/", {
+      session,
+      csrf: false,
+      json: { currentPassword: PASSWORD, newPassword: NEW },
+    });
+    expect(noCsrf.status).toBe(403);
   });
 });

@@ -12,6 +12,7 @@ import { UsersManager } from "../admin/users/users-manager";
 import { EnvironmentsWorkspace } from "../projects/[projectId]/environments/environments-workspace";
 import { AddressesAdmin } from "./addresses-admin";
 import { AiSettingsForm } from "./ai-settings-form";
+import { ChangePasswordForm } from "./change-password-form";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -43,7 +44,8 @@ export default async function SettingsPage() {
           <CardHeader>
             <CardTitle>Your account</CardTitle>
             <CardDescription>
-              Ask an Admin / QA Lead to change your name, email or role.
+              Ask an Admin / QA Lead to change your name, email or role. You can change your own
+              password below.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -55,6 +57,9 @@ export default async function SettingsPage() {
               <dt className="text-muted">Role</dt>
               <dd className="font-semibold">{ROLE_LABELS[auth.user.role]}</dd>
             </dl>
+            <div className="border-line-soft mt-5 border-t pt-5">
+              <ChangePasswordForm />
+            </div>
           </CardContent>
         </Card>
         {isLead && (

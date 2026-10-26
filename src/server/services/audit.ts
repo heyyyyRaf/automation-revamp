@@ -9,6 +9,7 @@ export type AuditAction =
   | "user.create"
   | "user.update"
   | "user.password_reset"
+  | "user.password_change"
   | "project.create"
   | "project.update"
   | "project.archive"

@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
   },
   output: "standalone",
   poweredByHeader: false,
+  // The dev badge injects inline styles the strict CSP blocks, leaving a stray box on the page.
+  devIndicators: false,
   reactStrictMode: true,
   // Native / wasm packages that must not be bundled into server chunks.
   serverExternalPackages: [

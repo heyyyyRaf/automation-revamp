@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
 import { ROLES, ROLE_LABELS, type RoleName } from "@/lib/permissions";
+import { PASSWORD_RULES } from "@/lib/validation";
 import { formatDate } from "@/lib/utils";
 
 interface UserRow {
@@ -184,7 +185,7 @@ function CreateUserDialog({ onCreated }: { onCreated: (u: UserRow) => void }) {
           <Field
             label="Temporary password"
             htmlFor="new-password"
-            hint="At least 12 characters."
+            hint={PASSWORD_RULES}
             error={fe("password")}
           >
             <Input
@@ -192,7 +193,7 @@ function CreateUserDialog({ onCreated }: { onCreated: (u: UserRow) => void }) {
               name="password"
               type="password"
               required
-              minLength={12}
+              minLength={8}
               autoComplete="new-password"
             />
           </Field>
@@ -242,7 +243,7 @@ function ResetPasswordDialog({ user, onDone }: { user: UserRow; onDone: (msg: st
           <Field
             label="New password"
             htmlFor={`pw-${user.id}`}
-            hint="At least 12 characters."
+            hint={PASSWORD_RULES}
             error={error ?? undefined}
           >
             <Input
@@ -250,7 +251,7 @@ function ResetPasswordDialog({ user, onDone }: { user: UserRow; onDone: (msg: st
               name="password"
               type="password"
               required
-              minLength={12}
+              minLength={8}
               autoComplete="new-password"
             />
           </Field>

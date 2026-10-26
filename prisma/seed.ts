@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   });
   if (!input.success) {
     console.error(
-      "Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min 12 characters) in .env, then run again.",
+      "Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (8+ characters with a capital letter, a number and a special character) in .env, then run again.",
     );
     process.exitCode = 1;
     return;

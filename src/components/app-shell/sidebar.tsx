@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 import {
   CheckIcon,
   CodeIcon,
@@ -11,6 +12,7 @@ import {
   SettingsIcon,
 } from "@/components/icons";
 import { LogoutButton } from "@/components/logout-button";
+import { LAST_PROJECT_COOKIE } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 
 const PROJECT_RE = /^\/projects\/([a-z0-9]{20,40})(?:\/|$)/;
@@ -21,7 +23,17 @@ const PROJECT_RE = /^\/projects\/([a-z0-9]{20,40})(?:\/|$)/;
  */
 export function Sidebar({ user }: { user: { name: string; roleLabel: string } }) {
   const pathname = usePathname();
+  const pick = useSearchParams().get("pick");
   const projectId = PROJECT_RE.exec(pathname)?.[1];
+  // Remember the open project, so the sidebar can return to it from outside a project.
+  useEffect(() => {
+    if (projectId) {
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `${LAST_PROJECT_COOKIE}=${projectId}; Path=/; Max-Age=2592000; SameSite=Lax${secure}`;
+    }
+  }, [projectId]);
+  // "Choose a project" page reached from a module link: highlight that module, not Projects.
+  const picking = pathname === "/projects" && pick ? pick : null;
   const inProject = (section: string) =>
     projectId ? `/projects/${projectId}/${section}` : `/projects?pick=${section}`;
 
@@ -31,7 +43,7 @@ export function Sidebar({ user }: { user: { name: string; roleLabel: string } })
       label: "Projects",
       Icon: ProjectsIcon,
       active:
-        pathname === "/projects" ||
+        (pathname === "/projects" && !picking) ||
         (projectId !== undefined &&
           !/\/(test-cases|scripts|runs|report|defects)(\/|$)/.test(
             pathname.slice(`/projects/${projectId}`.length),
@@ -41,19 +53,19 @@ export function Sidebar({ user }: { user: { name: string; roleLabel: string } })
       href: inProject("test-cases"),
       label: "Test cases",
       Icon: ListIcon,
-      active: /\/test-cases(\/|$)/.test(pathname),
+      active: picking === "test-cases" || /\/test-cases(\/|$)/.test(pathname),
     },
     {
       href: inProject("scripts"),
       label: "Test scripts",
       Icon: CodeIcon,
-      active: /\/scripts(\/|$)/.test(pathname),
+      active: picking === "scripts" || /\/scripts(\/|$)/.test(pathname),
     },
     {
       href: inProject("runs"),
       label: "Runs and reports",
       Icon: PlayIcon,
-      active: /\/(runs|report|defects)(\/|$)/.test(pathname),
+      active: picking === "runs" || /\/(runs|report|defects)(\/|$)/.test(pathname),
     },
     {
       href: "/settings",
@@ -64,7 +76,8 @@ export function Sidebar({ user }: { user: { name: string; roleLabel: string } })
   ];
 
   return (
-    <aside className="border-line box-border flex max-w-full flex-[1_1_220px] flex-col gap-6 border-r bg-white px-4 py-6">
+    // Stays in place while the page scrolls (tablet and up); on phones it sits above the page.
+    <aside className="border-line box-border flex max-w-full flex-[1_1_220px] flex-col gap-6 border-r bg-white px-4 py-6 md:sticky md:top-0 md:h-screen md:flex-[0_0_220px] md:overflow-y-auto">
       <Link
         href="/projects"
         className="text-ink hover:text-ink flex items-center gap-2.5 px-2 no-underline"

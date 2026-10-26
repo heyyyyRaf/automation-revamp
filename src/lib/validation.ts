@@ -16,10 +16,28 @@ export const emailSchema = z
   .max(254)
   .pipe(z.email("Enter a valid email address."));
 
+/** Shown next to every "new password" field. */
+export const PASSWORD_RULES =
+  "At least 8 characters, with a capital letter, a number and a special character.";
+
 export const newPasswordSchema = z
   .string()
-  .min(12, "Password must be at least 12 characters.")
-  .max(128, "Password must be at most 128 characters.");
+  .min(8, "Password must be at least 8 characters.")
+  .max(128, "Password must be at most 128 characters.")
+  .regex(/\p{Lu}/u, "Add at least one capital letter.")
+  .regex(/\p{Nd}/u, "Add at least one number.")
+  .regex(/[^\p{L}\p{N}\s]/u, "Add at least one special character, such as ! ? # or @.");
+
+/** Settings → Your account: change your own password. */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Enter your current password.").max(128),
+    newPassword: newPasswordSchema,
+  })
+  .refine((v) => v.currentPassword !== v.newPassword, {
+    message: "Choose a password different from your current one.",
+    path: ["newPassword"],
+  });
 
 export const loginSchema = z.object({
   email: emailSchema,

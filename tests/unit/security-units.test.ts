@@ -241,15 +241,19 @@ describe("input validation schemas", () => {
     ).toBe(false);
   });
 
-  it("requires strong-enough passwords for new users", () => {
+  it("requires 8+ characters with a capital letter, a number and a special character", () => {
     const base = { email: "a@b.co", name: "A", role: "VIEWER" };
-    expect(createUserSchema.safeParse({ ...base, password: "short" }).success).toBe(false);
-    expect(createUserSchema.safeParse({ ...base, password: "long-enough-pass" }).success).toBe(
-      true,
-    );
+    const ok = (password: string) => createUserSchema.safeParse({ ...base, password }).success;
+    expect(ok("Abcde1!x")).toBe(true);
+    expect(ok("Ñandú-2024")).toBe(true);
+    expect(ok("Ab1!xyz")).toBe(false); // 7 characters
+    expect(ok("abcdef1!")).toBe(false); // no capital letter
+    expect(ok("Abcdefg!")).toBe(false); // no number
+    expect(ok("Abcdefg1")).toBe(false); // no special character
+    expect(ok("Abcdefg 1")).toBe(false); // a space is not a special character
+    expect(ok(`A1!${"x".repeat(126)}`)).toBe(false); // over 128
     expect(
-      createUserSchema.safeParse({ ...base, role: "SUPERUSER", password: "long-enough-pass" })
-        .success,
+      createUserSchema.safeParse({ ...base, role: "SUPERUSER", password: "Abcde1!x" }).success,
     ).toBe(false);
     expect(updateUserSchema.safeParse({}).success).toBe(false);
   });

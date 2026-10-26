@@ -279,7 +279,7 @@ describe("role enforcement", () => {
       expect((await call(usersRoute.GET, "/", { session: s })).status).toBe(403);
       const create = await call(usersRoute.POST, "/", {
         session: s,
-        json: { email: "new@test.local", name: "N", role: "ADMIN", password: "long-enough-pass" },
+        json: { email: "new@test.local", name: "N", role: "ADMIN", password: "Long-enough-1" },
       });
       expect(create.status).toBe(403);
     }

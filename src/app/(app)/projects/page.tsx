@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Card } from "@/components/ui/card";
 import { firstName } from "@/lib/format";
@@ -7,6 +9,7 @@ import { can } from "@/lib/permissions";
 import { requireAuthPage } from "@/server/auth/current-user";
 import { dashboardStats, listProjects } from "@/server/services/projects";
 import { listUsers } from "@/server/services/users";
+import { LAST_PROJECT_COOKIE } from "@/lib/nav";
 import { CreateProjectDialog } from "./create-project-dialog";
 import { ProjectsDashboard } from "./projects-dashboard";
 
@@ -27,6 +30,15 @@ export default async function ProjectsPage({
   const { archived, pick } = await searchParams;
   const showArchived = archived === "1";
   const projects = await listProjects(auth, { includeArchived: showArchived });
+
+  // Sidebar "Test cases / Test scripts / Runs and reports" outside a project: open that module
+  // in the last project you used (if you still have access), or in your only project.
+  if (pick && PICK_LABEL[pick]) {
+    const last = (await cookies()).get(LAST_PROJECT_COOKIE)?.value;
+    const target =
+      projects.find((p) => p.id === last) ?? (projects.length === 1 ? projects[0] : undefined);
+    if (target) redirect(`/projects/${target.id}/${pick}`);
+  }
   const stats = await dashboardStats(auth, projects);
   const canCreate = can(auth.user.role, "projects:create");
   const isAdmin = auth.user.role === "ADMIN";
