@@ -1,19 +1,32 @@
 "use client";
 
-import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { PlusIcon } from "@/components/icons";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import { Field, Input, Textarea } from "@/components/ui/form";
+import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
 
-export function CreateProjectDialog() {
+/**
+ * New project (FR-1.1). The creator owns it by default; an Admin may pick another owner
+ * (`owners` is only filled for Admins).
+ */
+export function CreateProjectDialog({
+  owners,
+  currentUserId,
+  trigger = "primary",
+}: {
+  owners: { id: string; name: string }[];
+  currentUserId: string;
+  trigger?: "primary" | "outline";
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [pending, setPending] = useState(false);
+  const idp = trigger; // two dialogs can be on the page: keep field ids unique
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -21,8 +34,13 @@ export function CreateProjectDialog() {
     setPending(true);
     setError(null);
     try {
+      const ownerId = form.get("ownerId");
       const { project } = await api<{ project: { id: string } }>("/api/projects", {
-        json: { name: form.get("name"), description: form.get("description") || undefined },
+        json: {
+          name: form.get("name"),
+          description: form.get("description") || undefined,
+          ...(ownerId && ownerId !== currentUserId ? { ownerId } : {}),
+        },
       });
       router.push(`/projects/${project.id}`);
     } catch (err) {
@@ -36,9 +54,13 @@ export function CreateProjectDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>
-          <Plus aria-hidden /> New project
-        </Button>
+        {trigger === "primary" ? (
+          <Button>
+            <PlusIcon /> New project
+          </Button>
+        ) : (
+          <Button variant="outline">Start a project</Button>
+        )}
       </DialogTrigger>
       <DialogContent
         title="New project"
@@ -46,22 +68,41 @@ export function CreateProjectDialog() {
       >
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           {error && !error.fieldErrors["name"] && <Alert tone="error">{error.message}</Alert>}
-          <Field label="Project name" htmlFor="name" error={error?.fieldErrors["name"]?.[0]}>
+          <Field
+            label="Project name"
+            htmlFor={`${idp}-name`}
+            error={error?.fieldErrors["name"]?.[0]}
+          >
             <Input
-              id="name"
+              id={`${idp}-name`}
               name="name"
               required
               maxLength={120}
-              placeholder="e.g. Customer portal"
+              placeholder="e.g. Leave Request Portal"
             />
           </Field>
           <Field
             label="Description (optional)"
-            htmlFor="description"
-            hint="What app or release is being tested?"
+            htmlFor={`${idp}-description`}
+            hint="Team, app or release being tested."
           >
-            <Textarea id="description" name="description" maxLength={2000} />
+            <Textarea id={`${idp}-description`} name="description" maxLength={2000} />
           </Field>
+          {owners.length > 0 && (
+            <Field
+              label="Owner"
+              htmlFor={`${idp}-owner`}
+              hint="The owner manages members and settings."
+            >
+              <Select id={`${idp}-owner`} name="ownerId" defaultValue={currentUserId}>
+                {owners.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.id === currentUserId ? `${o.name} (you)` : o.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Button type="submit" disabled={pending}>
             {pending ? "Creating…" : "Create project"}
           </Button>

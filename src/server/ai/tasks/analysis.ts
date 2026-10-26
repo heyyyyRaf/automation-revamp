@@ -1,17 +1,7 @@
 import { z } from "zod";
-import { dataGuard } from "@/server/ai/prompt";
+import { REQUIREMENT_TYPES } from "@/lib/domain";
 
-export const REQUIREMENT_TYPES = [
-  "FUNCTIONAL",
-  "NON_FUNCTIONAL",
-  "BUSINESS_RULE",
-  "UI",
-  "DATA",
-  "SECURITY",
-  "OTHER",
-] as const;
-
-/** What the model must return for one chunk of documents / one batch of images. */
+/** What the model must return for one chunk of a document. */
 export const analysisOutputSchema = z.object({
   requirements: z
     .array(
@@ -19,8 +9,9 @@ export const analysisOutputSchema = z.object({
         ref: z.string().min(1).max(12),
         text: z.string().trim().min(5).max(2000),
         type: z.enum(REQUIREMENT_TYPES),
-        /** The DOC-n / IMG-n id of the source block. */
+        /** The DOC-n id of the source block. */
         source: z.string().max(20),
+        /** NFR-7: page and/or heading, so a reviewer can verify it. */
         section: z.string().max(200).nullable(),
       }),
     )
@@ -46,20 +37,7 @@ export const analysisOutputSchema = z.object({
 
 export type AnalysisOutput = z.infer<typeof analysisOutputSchema>;
 
-export function analysisSystemPrompt(boundary: string): string {
-  return [
-    "You are a senior QA analyst. Extract testable information from the project material provided.",
-    "",
-    "Return:",
-    "- requirements: ATOMIC requirements — one testable behaviour each. Split compound sentences.",
-    "  Keep the original meaning and wording where possible; do not invent behaviour.",
-    "  ref: a short local id (R1, R2, ...). source: the id of the block it came from (e.g. DOC-1, IMG-2).",
-    "  section: the heading, page or area it came from, or null.",
-    "- userFlows: end-to-end journeys a user takes, as ordered steps.",
-    "- openQuestions: ambiguities, gaps or contradictions a tester must clarify before testing.",
-    "  relatedRef: the ref of the requirement it concerns, or null.",
-    "If the material contains no requirements, return empty arrays.",
-    "",
-    dataGuard(boundary),
-  ].join("\n");
-}
+/** FR-2.2: what the vision model returns for an image (flow diagram or Figma frame). */
+export const imageDescriptionSchema = z.object({
+  description: z.string().trim().min(1).max(30_000),
+});

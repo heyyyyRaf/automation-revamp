@@ -12,13 +12,15 @@ import * as exportsRoute from "@/app/api/projects/[projectId]/exports/route";
 import * as questionRoute from "@/app/api/projects/[projectId]/questions/[questionId]/route";
 import * as reqRoute from "@/app/api/projects/[projectId]/requirements/[requirementId]/route";
 import * as reqsRoute from "@/app/api/projects/[projectId]/requirements/route";
+import * as scenariosRoute from "@/app/api/projects/[projectId]/scenarios/route";
 import * as tcRoute from "@/app/api/projects/[projectId]/test-cases/[testCaseId]/route";
 import * as generateRoute from "@/app/api/projects/[projectId]/test-cases/generate/route";
 import * as reviewRoute from "@/app/api/projects/[projectId]/test-cases/review/route";
 import * as tcsRoute from "@/app/api/projects/[projectId]/test-cases/route";
 import readXlsxFile from "read-excel-file/node";
-import type { FakeProvider } from "@/server/ai/fake-provider";
-import { getAIProvider, setAIProvider } from "@/server/ai/provider";
+import { FakeProvider } from "@/server/ai/fake-provider";
+import type { StructuredRequest } from "@/server/ai/types";
+import { getFakeProvider, setAIProvider } from "@/server/ai/provider";
 import { db } from "@/server/db";
 import {
   call,
@@ -49,7 +51,7 @@ beforeEach(async () => {
   projectId = (await createProject("Checkout", [t.user.id], a.user.id)).id;
 });
 
-const fake = () => getAIProvider() as FakeProvider;
+const fake = (): FakeProvider => getFakeProvider();
 
 async function uploadAndExtract(name = "frd.txt", text = FRD) {
   const res = await call(docsRoute.POST, "/", {
@@ -91,7 +93,7 @@ describe("requirement analysis", () => {
     const reqs = await db.requirement.findMany({ where: { projectId }, orderBy: { key: "asc" } });
     expect(reqs.map((r) => r.key)).toEqual(["REQ-001", "REQ-002", "REQ-003"]);
     expect(reqs.every((r) => r.origin === "AI" && r.sourceDocumentId)).toBe(true);
-    expect(reqs.find((r) => r.text.includes("lock"))?.type).toBe("SECURITY");
+    expect(reqs.find((r) => r.text.includes("lock"))?.type).toBe("VALIDATION");
     expect(await db.userFlow.count({ where: { projectId } })).toBe(1);
     const q = await db.openQuestion.findFirstOrThrow({ where: { projectId } });
     expect(q.requirementId).toBe(reqs[0]?.id); // relatedRef mapped to the saved requirement
@@ -159,25 +161,107 @@ describe("requirement analysis", () => {
     expect(inj).toBeLessThan(end);
   });
 
-  it("rejects malformed AI output: retries once, then fails without saving anything", async () => {
+  it("rejects malformed AI output: retries the chunk twice, then fails without saving anything", async () => {
     await uploadAndExtract();
     const bad = { requirements: [{ ref: "R1", text: "x" }], userFlows: "nope" };
-    fake().queue.push(bad, bad);
+    fake().queue.push(bad, bad, bad);
     const res = await call(analysisRoute.POST, "/", {
       method: "POST",
       session: tester,
       params: { projectId },
     });
     const { job } = await jsonOf<{ job: { id: string } }>(res);
-    expect((await runJob(job.id, 1)).outcome).toBe("retry");
-    const final = await runJob(job.id, 2);
-    expect(final).toEqual({
+    // The chunk already had its own retries, so the job does not start over.
+    expect(await runJob(job.id, 1)).toEqual({
       outcome: "failed",
       message: "The AI returned an answer in the wrong format.",
     });
     expect(await db.requirement.count({ where: { projectId } })).toBe(0);
-    // Tokens spent on the bad answers are still counted.
-    expect(await db.aiUsage.count({ where: { projectId } })).toBe(2);
+    // Tokens spent on the bad answers are still counted, with the prompt version.
+    const usage = await db.aiUsage.findMany({ where: { projectId } });
+    expect(usage).toHaveLength(3);
+    expect(usage.every((u) => u.promptVersion === "requirement-analysis@2")).toBe(true);
+  });
+
+  it("keeps what it found when one part fails, and retries only the failed part (NFR-6)", async () => {
+    await uploadAndExtract("frd.txt", FRD);
+    await uploadAndExtract(
+      "stories.md",
+      "As a buyer I want saved cards.\nThe system shall remember the last card used.",
+    );
+    // The FRD part keeps returning a malformed answer; the user stories part works.
+    class FlakyProvider extends FakeProvider {
+      failFrd = true;
+      override async generate(request: StructuredRequest<unknown>) {
+        const text = request.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+        if (this.failFrd && text.includes("frd.txt")) {
+          this.calls.push(request);
+          return {
+            raw: { nope: true },
+            usage: { inputTokens: 10, outputTokens: 10 },
+            model: "fake",
+          };
+        }
+        return super.generate(request);
+      }
+    }
+    const flaky = new FlakyProvider();
+    setAIProvider(flaky);
+    const res = await call(analysisRoute.POST, "/", {
+      method: "POST",
+      session: tester,
+      params: { projectId },
+    });
+    const { job } = await jsonOf<{ job: { id: string } }>(res);
+    expect(await runJob(job.id, 1)).toEqual({ outcome: "succeeded" });
+    const done = await db.job.findUniqueOrThrow({ where: { id: job.id } });
+    const result = done.result as {
+      partial: boolean;
+      failedChunks: { name: string; part: number }[];
+    };
+    expect(result.partial).toBe(true);
+    expect(result.failedChunks).toEqual([expect.objectContaining({ name: "frd.txt", part: 1 })]);
+    const before = await db.requirement.count({ where: { projectId } });
+    expect(before).toBeGreaterThan(0);
+
+    const retry = await call(analysisRoute.POST, "/", {
+      session: tester,
+      params: { projectId },
+      json: { retryJobId: job.id },
+    });
+    expect(retry.status).toBe(202);
+    const { job: retryJob } = await jsonOf<{ job: { id: string } }>(retry);
+    flaky.failFrd = false;
+    const calls = fake().calls.length;
+    expect(await runJob(retryJob.id, 1)).toEqual({ outcome: "succeeded" });
+    expect(fake().calls.length - calls).toBe(1); // only the failed part ran again
+    expect(await db.requirement.count({ where: { projectId } })).toBeGreaterThan(before);
+
+    // A finished analysis without failed parts has nothing to retry.
+    const again = await call(analysisRoute.POST, "/", {
+      session: tester,
+      params: { projectId },
+      json: { retryJobId: retryJob.id },
+    });
+    expect(again.status).toBe(409);
+  });
+
+  it("waits until every file has been read", async () => {
+    const res = await call(docsRoute.POST, "/", {
+      session: tester,
+      params: { projectId },
+      form: fileForm("REQUIREMENTS", "frd.txt", FRD),
+    });
+    expect(res.status).toBe(201);
+    const early = await call(analysisRoute.POST, "/", {
+      method: "POST",
+      session: tester,
+      params: { projectId },
+    });
+    expect(early.status).toBe(409);
+    expect((await jsonOf<{ error: { message: string } }>(early)).error.message).toMatch(
+      /still being read/,
+    );
   });
 
   it("allows only one analysis at a time and refuses when nothing is uploaded", async () => {
@@ -270,43 +354,43 @@ describe("test case generation and review", () => {
   it("drops links to requirements the AI invented and skips duplicate titles", async () => {
     const reqs = await seedRequirements();
     const r1 = reqs[0]!;
+    const base = {
+      preconditions: "None",
+      steps: [{ action: "Do it", expected: null }],
+      testData: [{ name: "none", value: "not needed" }],
+      expectedResult: "Works",
+      automatableReason: "Deterministic UI steps.",
+      tags: [],
+    };
     fake().queue.push({
+      scenarios: [{ ref: "S1", title: "Pay", description: "", flowSteps: [] }],
       testCases: [
         {
+          ...base,
           title: "Real case",
-          preconditions: null,
-          steps: [{ action: "Do it", expected: null }],
-          testData: [],
-          expectedResult: "Works",
           type: "POSITIVE",
           priority: "HIGH",
           requirementKeys: [r1.key, "REQ-999"],
           automatable: true,
-          automatableReason: "",
+          scenarioRef: "S1",
         },
         {
+          ...base,
           title: "Invented requirement only",
-          preconditions: null,
-          steps: [{ action: "Do it", expected: null }],
-          testData: [],
-          expectedResult: "Works",
           type: "POSITIVE",
           priority: "LOW",
           requirementKeys: ["REQ-999"],
           automatable: false,
-          automatableReason: "",
+          scenarioRef: "S1",
         },
         {
+          ...base,
           title: "real CASE!",
-          preconditions: null,
-          steps: [{ action: "Again", expected: null }],
-          testData: [],
-          expectedResult: "Works",
           type: "NEGATIVE",
           priority: "LOW",
           requirementKeys: [r1.key],
           automatable: false,
-          automatableReason: "",
+          scenarioRef: "S1",
         },
       ],
     });
@@ -382,24 +466,59 @@ describe("test case generation and review", () => {
         projectId: other.id,
         key: "REQ-001",
         text: "Foreign requirement",
-        type: "FUNCTIONAL",
+        type: "FEATURE",
         origin: "MANUAL",
       },
     });
+    const scenario = await call(scenariosRoute.POST, "/", {
+      session: tester,
+      params: { projectId },
+      json: { title: "Open the page" },
+    });
+    expect(scenario.status).toBe(201);
+    const { scenario: sc } = await jsonOf<{ scenario: { id: string; key: string } }>(scenario);
+    expect(sc.key).toBe("SC-001");
     const body = {
       title: "Manual case",
+      scenarioId: sc.id,
+      preconditions: "None",
       steps: [{ action: "Open page" }],
+      testData: [{ name: "none", value: "not needed" }],
       expectedResult: "Page opens",
       type: "POSITIVE",
       priority: "MEDIUM",
       automatable: true,
+      automatableReason: "Deterministic UI steps.",
+      tags: ["Smoke"],
     };
+    // FR-4.3: every field is required.
+    const missing = await call(tcsRoute.POST, "/", {
+      session: tester,
+      params: { projectId },
+      json: { ...body, preconditions: undefined, requirementIds: [reqs[0]!.id] },
+    });
+    expect(missing.status).toBe(422);
     const bad = await call(tcsRoute.POST, "/", {
       session: tester,
       params: { projectId },
       json: { ...body, requirementIds: [foreignReq.id] },
     });
     expect(bad.status).toBe(400);
+    const foreignScenario = await db.scenario.create({
+      data: {
+        projectId: other.id,
+        key: "SC-001",
+        title: "Theirs",
+        flowSteps: [],
+        origin: "MANUAL",
+      },
+    });
+    const badScenario = await call(tcsRoute.POST, "/", {
+      session: tester,
+      params: { projectId },
+      json: { ...body, scenarioId: foreignScenario.id, requirementIds: [reqs[0]!.id] },
+    });
+    expect(badScenario.status).toBe(400);
     const good = await call(tcsRoute.POST, "/", {
       session: tester,
       params: { projectId },
@@ -411,6 +530,7 @@ describe("test case generation and review", () => {
     ).toMatchObject({
       key: "TC-001",
       origin: "MANUAL",
+      tags: ["smoke"],
     });
   });
 });

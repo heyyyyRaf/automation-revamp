@@ -4,7 +4,7 @@ import { JOB_HANDLERS } from "@/server/jobs/handlers";
 import { runTrackedJob, type JobOutcome } from "@/server/jobs/runner";
 import { createLogger } from "@/server/logger";
 
-const log = createLogger({ level: "silent" });
+const log = createLogger({ level: (process.env.TEST_JOB_LOG_LEVEL ?? "silent") as "silent" });
 
 /** Runs one attempt of a queued job in-process, exactly as the worker would. */
 export function runJob(jobId: string, attempt = 1): Promise<JobOutcome> {

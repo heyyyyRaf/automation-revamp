@@ -1,18 +1,64 @@
 @import "tailwindcss";
+/* Self-hosted fonts (the CSP allows no third-party font hosts). */
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "@fontsource/jetbrains-mono/500.css";
 
-/* One accent colour (blue) on a light background. */
+/* Design tokens from the Traxion QA UI design. One accent (blue) on a light background. */
 @theme {
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-strong: #1e40af;
-  --color-accent-soft: #eff6ff;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-accent: #3355e0;
+  --color-accent-hover: #2b47c4;
+  --color-accent-strong: #1c318f;
+  --color-accent-soft: #eaeffe;
+  --color-accent-faint: #f8faff;
+  --color-accent-line: #b9c3e8;
+  --color-link: #2b47c4;
+
+  --color-page: #f5f6fa;
+  --color-line: #e3e6ee;
+  --color-line-soft: #edeff4;
+  --color-control: #d5d9e3;
+  --color-chip: #f1f3f8;
+  --color-ink: #1b1f2a;
+  --color-ink-2: #3d4456;
+  --color-muted: #5a6275;
+
+  --color-success-soft: #e3f3ea;
+  --color-success: #1a6b43;
+  --color-success-bar: #2e9a62;
+  --color-warn-soft: #fdece2;
+  --color-warn-faint: #fdf1e8;
+  --color-warn: #a3400a;
+  --color-warn-ink: #7a3208;
+  --color-warn-bar: #d9691f;
+  --color-purple-soft: #f1ecfd;
+  --color-purple-faint: #faf8ff;
+  --color-purple-line: #c9bdf0;
+  --color-purple: #5236b0;
+  --color-purple-bar: #6b4bd8;
+  --color-neutral-soft: #edeff4;
+
+  --font-sans: "Plus Jakarta Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+
+  --radius-card: 14px;
+  --radius-control: 10px;
 }
 
-html {
-  color-scheme: light;
-}
+/* Base layer, so utility classes (e.g. a link styled as a button) always win. */
+@layer base {
+  html {
+    color-scheme: light;
+  }
 
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  body {
+    @apply bg-page text-ink antialiased;
+    font-size: 15px;
+  }
+
+  a {
+    color: var(--color-link);
+  }
+  a:hover {
+    color: var(--color-accent-strong);
+  }
 }

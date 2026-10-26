@@ -48,16 +48,20 @@ model User {
   memberships ProjectMember[]
   auditLogs   AuditLog[]
 
-  projectsCreated   Project[]       @relation("ProjectCreatedBy")
-  documentsUploaded Document[]      @relation("DocumentUploadedBy")
-  testCasesReviewed TestCase[]      @relation("TestCaseReviewedBy")
-  scriptVersions    ScriptVersion[] @relation("ScriptVersionCreatedBy")
-  scriptsApproved   Script[]        @relation("ScriptApprovedBy")
-  runsTriggered     Run[]           @relation("RunTriggeredBy")
-  targetsRequested  AllowedTarget[] @relation("AllowedTargetRequestedBy")
-  targetsDecided    AllowedTarget[] @relation("AllowedTargetDecidedBy")
-  exportsCreated    Export[]        @relation("ExportCreatedBy")
-  questionsAnswered OpenQuestion[]  @relation("QuestionAnsweredBy")
+  projectsCreated     Project[]       @relation("ProjectCreatedBy")
+  documentsUploaded   Document[]      @relation("DocumentUploadedBy")
+  testCasesReviewed   TestCase[]      @relation("TestCaseReviewedBy")
+  scriptVersions      ScriptVersion[] @relation("ScriptVersionCreatedBy")
+  scriptsApproved     Script[]        @relation("ScriptApprovedBy")
+  runsTriggered       Run[]           @relation("RunTriggeredBy")
+  targetsRequested    AllowedTarget[] @relation("AllowedTargetRequestedBy")
+  targetsDecided      AllowedTarget[] @relation("AllowedTargetDecidedBy")
+  exportsCreated      Export[]        @relation("ExportCreatedBy")
+  questionsAnswered   OpenQuestion[]  @relation("QuestionAnsweredBy")
+  ownedProjects       Project[]       @relation("ProjectOwner")
+  testCasesUpdated    TestCase[]      @relation("TestCaseUpdatedBy")
+  requirementsUpdated Requirement[]   @relation("RequirementUpdatedBy")
+  comments            Comment[]
 }
 
 /// Server-side session. The cookie holds a random token; only its SHA-256 is stored.
@@ -89,6 +93,8 @@ model Project {
   description String?
   status      ProjectStatus @default(ACTIVE)
   createdById String
+  /// FR-1.1: the project owner (shown on the project; defaults to its creator).
+  ownerId     String
   archivedAt  DateTime?
 
   /// Monthly AI token cap (input + output). Null = use the global default from env.
@@ -97,11 +103,13 @@ model Project {
   /// Next number for human-readable keys (REQ-001, TC-001). Incremented atomically.
   nextRequirementNo Int @default(1)
   nextTestCaseNo    Int @default(1)
+  nextScenarioNo    Int @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   createdBy User @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  owner     User @relation("ProjectOwner", fields: [ownerId], references: [id])
 
   members        ProjectMember[]
   documents      Document[]
@@ -117,6 +125,8 @@ model Project {
   scripts        Script[]
   runs           Run[]
   exports        Export[]
+  scenarios      Scenario[]
+  comments       Comment[]
 
   @@index([status])
 }
@@ -141,6 +151,15 @@ enum DocumentCategory {
   FIGMA // link or PNG/JPG frames
 }
 
+/// FR-2.3: what a file is; shown on the file and sent to the AI as context.
+enum DocumentTag {
+  FRD
+  USER_STORY
+  FIGMA
+  FLOW_DIAGRAM
+  OTHER
+}
+
 enum DocumentSource {
   FILE
   LINK // Figma URL
@@ -158,6 +177,7 @@ model Document {
   id           String           @id @default(cuid())
   projectId    String
   category     DocumentCategory
+  typeTag      DocumentTag      @default(OTHER)
   source       DocumentSource
   originalName String // display only; sanitized, never used as a path
   mimeType     String? // detected from magic bytes, not the client
@@ -195,6 +215,7 @@ enum JobType {
   IMPORT_FIGMA
   ANALYZE_REQUIREMENTS
   GENERATE_TEST_CASES
+  REWRITE_TEST_CASE
   VERIFY_LOGIN
   CAPTURE_DOM
   GENERATE_SCRIPT
@@ -247,6 +268,9 @@ model AuditLog {
   entityType String
   entityId   String?
   metadata   Json? // redacted; never contains secrets
+  /// Changed fields before and after the action (never secrets).
+  before     Json?
+  after      Json?
   ipAddress  String?
   requestId  String?
   createdAt  DateTime @default(now())
@@ -261,15 +285,17 @@ model AuditLog {
 
 /// One row per AI call — used for the per-project monthly token cap.
 model AiUsage {
-  id           String   @id @default(cuid())
-  projectId    String
-  jobId        String?
-  provider     String
-  model        String
-  purpose      JobType
-  inputTokens  Int
-  outputTokens Int
-  createdAt    DateTime @default(now())
+  id            String   @id @default(cuid())
+  projectId     String
+  jobId         String?
+  provider      String
+  model         String
+  purpose       JobType
+  /// NFR-10: the versioned prompt template used, e.g. "analysis@1".
+  promptVersion String?
+  inputTokens   Int
+  outputTokens  Int
+  createdAt     DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   job     Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
@@ -281,14 +307,23 @@ model AiUsage {
 // Phase 2 — Requirements, questions, test cases, exports
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// FR-3.1 categories.
 enum RequirementType {
-  FUNCTIONAL
-  NON_FUNCTIONAL
+  FEATURE
+  USER_ACTION
+  FIELD
+  VALIDATION
   BUSINESS_RULE
-  UI
-  DATA
-  SECURITY
+  EXPECTED_RESULT
+  FLOW
+  NON_FUNCTIONAL
   OTHER
+}
+
+enum RequirementStatus {
+  ACTIVE
+  NEEDS_REVIEW
+  MERGED
 }
 
 enum Origin {
@@ -297,23 +332,28 @@ enum Origin {
 }
 
 model Requirement {
-  id               String          @id @default(cuid())
+  id               String            @id @default(cuid())
   projectId        String
   key              String // REQ-001
-  text             String          @db.Text
+  text             String            @db.Text
   /// The AI's original wording. Re-analysis compares against it, so edited or deleted
   /// requirements are never proposed again.
-  originalText     String?         @db.Text
+  originalText     String?           @db.Text
   type             RequirementType
+  status           RequirementStatus @default(ACTIVE)
   origin           Origin
   sourceDocumentId String?
   sourceSection    String?
+  /// Set when this requirement was merged into another (FR-3.4).
+  mergedIntoId     String?
+  updatedById      String?
   deletedAt        DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   project        Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   sourceDocument Document?             @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  updatedBy      User?                 @relation("RequirementUpdatedBy", fields: [updatedById], references: [id])
   testCases      TestCaseRequirement[]
   questions      OpenQuestion[]
 
@@ -334,6 +374,27 @@ model UserFlow {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  @@index([projectId])
+}
+
+/// FR-4.1: a user flow to verify; test cases belong to a scenario.
+model Scenario {
+  id          String    @id @default(cuid())
+  projectId   String
+  key         String // SC-001
+  title       String
+  description String?   @db.Text
+  flowSteps   Json // string[]
+  userFlowId  String?
+  origin      Origin
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testCases TestCase[]
+
+  @@unique([projectId, key])
   @@index([projectId])
 }
 
@@ -381,30 +442,48 @@ enum ReviewStatus {
   REJECTED
 }
 
+/// FRD lifecycle: Draft, Approved, Scripted, then Passed / Failed / Error. Rejected leaves the cycle.
+enum TestCaseStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  SCRIPTED
+  PASSED
+  FAILED
+  ERROR
+}
+
 model TestCase {
-  id                String       @id @default(cuid())
+  id                String         @id @default(cuid())
   projectId         String
   key               String // TC-001
   title             String
-  preconditions     String?      @db.Text
+  preconditions     String?        @db.Text
   steps             Json // { action: string; expected?: string }[]
   testData          Json? // non-secret sample data only
-  expectedResult    String       @db.Text
+  expectedResult    String         @db.Text
   type              TestCaseType
   priority          Priority
   automatable       Boolean
   automatableReason String?
   origin            Origin
-  status            ReviewStatus @default(DRAFT)
+  status            TestCaseStatus @default(DRAFT)
+  scenarioId        String?
+  /// Free tags for selecting cases in a run (FR-8.1).
+  tags              String[]       @default([])
+  createdById       String?
+  updatedById       String?
   reviewedById      String?
   reviewedAt        DateTime?
   rejectionReason   String?
   deletedAt         DateTime?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   reviewedBy   User?                 @relation("TestCaseReviewedBy", fields: [reviewedById], references: [id])
+  updatedBy    User?                 @relation("TestCaseUpdatedBy", fields: [updatedById], references: [id])
+  scenario     Scenario?             @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
   requirements TestCaseRequirement[]
   script       Script?
   runTests     RunTest[]
@@ -422,6 +501,35 @@ model TestCaseRequirement {
 
   @@id([testCaseId, requirementId])
   @@index([requirementId])
+}
+
+enum CommentTarget {
+  TEST_CASE
+  RUN
+}
+
+/// Viewers (and everyone else on the project) can comment on test cases and run reports.
+model Comment {
+  id         String        @id @default(cuid())
+  projectId  String
+  targetType CommentTarget
+  targetId   String
+  authorId   String
+  body       String        @db.Text
+  createdAt  DateTime      @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id])
+
+  @@index([projectId, targetType, targetId, createdAt])
+}
+
+/// Lead-managed settings (AI model, default token cap). Secrets never live here.
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
 }
 
 enum ExportKind {
@@ -496,11 +604,13 @@ enum LoginCheckStatus {
 }
 
 model Environment {
-  id        String @id @default(cuid())
-  projectId String
-  name      String // "Staging", "UAT"
-  baseUrl   String // must match an APPROVED AllowedTarget origin
-  variables Json? // non-secret key/values
+  id          String @id @default(cuid())
+  projectId   String
+  name        String // "Staging", "UAT"
+  baseUrl     String // must match an APPROVED AllowedTarget origin
+  variables   Json? // non-secret key/values
+  /// How to sign in: { path, usernameLabel, passwordLabel, submitLabel, successText?, successUrlContains? }
+  loginConfig Json?
 
   loginCheckStatus LoginCheckStatus @default(NOT_CHECKED)
   loginCheckedAt   DateTime?
@@ -553,6 +663,10 @@ model Script {
   id                String       @id @default(cuid())
   projectId         String
   testCaseId        String       @unique
+  /// Page the script starts on (relative to the environment's base URL).
+  startPath         String       @default("/")
+  /// Environment whose page was captured when generating; used again for "Ask AI to fix".
+  environmentId     String?
   status            ReviewStatus @default(DRAFT)
   approvedVersionId String?      @unique
   approvedById      String?
@@ -589,6 +703,8 @@ model ScriptVersion {
   safetyCheckOk Boolean
   safetyIssues  Json? // blocked imports/calls found by the static check
   selectorCheck Json? // per-selector: { selector, found: boolean }
+  /// AI explanation of the script or of the fix it made.
+  notes         String? @db.Text
 
   createdById String?
   createdAt   DateTime @default(now())
@@ -633,6 +749,9 @@ model Run {
   failedCount   Int       @default(0)
   errorCount    Int       @default(0)
   skippedCount  Int       @default(0)
+  jobId         String?
+  error         String? // user-safe message for infrastructure errors
+  pausedAt      DateTime?
   createdAt     DateTime  @default(now())
 
   project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -680,6 +799,7 @@ model RunStep {
   id            String           @id @default(cuid())
   runTestId     String
   index         Int
+  category      String? // "pw:api", "expect", "test.step"
   title         String
   action        String? // "click", "fill", "expect"...
   status        TestResultStatus

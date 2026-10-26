@@ -178,10 +178,80 @@ describe("role enforcement", () => {
     expect(del.status).toBe(403);
   });
 
-  it("testers cannot create, archive or manage members of projects", async () => {
+  it("testers create projects they own, but only the owner or an Admin manages a project", async () => {
+    // FR-1.1: a tester may create a project and becomes its owner and a member.
+    const created = await call(projectsRoute.POST, "/", {
+      session: c.alice,
+      json: { name: "Mine" },
+    });
+    expect(created.status).toBe(201);
+    const { project } = await jsonOf<{ project: { id: string; ownerId: string } }>(created);
+    expect(project.ownerId).toBe(c.alice.userId);
     expect(
-      (await call(projectsRoute.POST, "/", { session: c.alice, json: { name: "Mine" } })).status,
+      await db.projectMember.count({ where: { projectId: project.id, userId: c.alice.userId } }),
+    ).toBe(1);
+    // ...but cannot create one for someone else.
+    expect(
+      (
+        await call(projectsRoute.POST, "/", {
+          session: c.alice,
+          json: { name: "For Bob", ownerId: c.bob.userId },
+        })
+      ).status,
     ).toBe(403);
+    // Viewers can't create projects at all.
+    expect(
+      (await call(projectsRoute.POST, "/", { session: c.viewer, json: { name: "V" } })).status,
+    ).toBe(403);
+
+    // The owner manages their own project's members and can archive it.
+    const ownAdd = await call(membersRoute.POST, "/", {
+      session: c.alice,
+      params: { projectId: project.id },
+      json: { userId: c.bob.userId },
+    });
+    expect(ownAdd.status).toBe(201);
+    const ownerRemoval = await call(memberRoute.DELETE, "/", {
+      method: "DELETE",
+      session: c.alice,
+      params: { projectId: project.id, userId: c.alice.userId },
+    });
+    expect(ownerRemoval.status).toBe(409); // the owner can't be removed
+    // Ownership can't go to a Viewer.
+    await call(membersRoute.POST, "/", {
+      session: c.alice,
+      params: { projectId: project.id },
+      json: { userId: c.viewer.userId },
+    });
+    const toViewer = await call(projectRoute.PATCH, "/", {
+      method: "PATCH",
+      session: c.alice,
+      params: { projectId: project.id },
+      json: { ownerId: c.viewer.userId },
+    });
+    expect(toViewer.status).toBe(400);
+    // Bob is a member, not the owner: he can't manage it.
+    const bobArchive = await call(projectRoute.PATCH, "/", {
+      method: "PATCH",
+      session: c.bob,
+      params: { projectId: project.id },
+      json: { status: "ARCHIVED" },
+    });
+    expect(bobArchive.status).toBe(403);
+    const ownArchive = await call(projectRoute.PATCH, "/", {
+      method: "PATCH",
+      session: c.alice,
+      params: { projectId: project.id },
+      json: { status: "ARCHIVED" },
+    });
+    expect(ownArchive.status).toBe(200);
+    const log = await db.auditLog.findFirstOrThrow({
+      where: { projectId: project.id, action: "project.archive" },
+    });
+    expect(log.before).toEqual({ status: "ACTIVE" });
+    expect(log.after).toEqual({ status: "ARCHIVED" });
+
+    // On a project Alice doesn't own, she can't archive or manage members.
     const archive = await call(projectRoute.PATCH, "/", {
       method: "PATCH",
       session: c.alice,

@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { describeImage } from "@/server/ai/tasks/describe-image";
 import { db } from "@/server/db";
 import { getEnv } from "@/server/env";
 import { ExtractionError, extractDocumentText } from "@/server/extraction/extract";
+import { toJobFailure } from "@/server/jobs/ai-errors";
 import { JobFailure, type JobHandler } from "@/server/jobs/runner";
 import { getStorage } from "@/server/storage/storage";
 import { EXTRACTABLE_KINDS, kindFromMime } from "@/server/uploads/validate";
@@ -19,7 +21,8 @@ export const extractTextHandler: JobHandler = async ({ job, signal }) => {
     throw new JobFailure("The file is no longer available.", false);
   }
   const kind = kindFromMime(doc.mimeType);
-  if (!kind || !EXTRACTABLE_KINDS.has(kind)) {
+  const isImage = kind === "png" || kind === "jpg";
+  if (!kind || (!isImage && !EXTRACTABLE_KINDS.has(kind))) {
     throw new JobFailure("Text extraction is not available for this file type.", false);
   }
 
@@ -27,6 +30,25 @@ export const extractTextHandler: JobHandler = async ({ job, signal }) => {
     where: { id: doc.id },
     data: { extractionStatus: "PROCESSING", extractionError: null },
   });
+
+  if (isImage) {
+    // FR-2.2: diagrams and design frames are read by the vision model.
+    let description: string;
+    try {
+      description = await describeImage(
+        { projectId: job.projectId, jobId: job.id, purpose: "EXTRACT_TEXT" },
+        doc,
+        signal,
+      );
+    } catch (err) {
+      throw toJobFailure(err);
+    }
+    await db.document.update({
+      where: { id: doc.id },
+      data: { extractionStatus: "SUCCEEDED", extractedText: description, pageCount: 1 },
+    });
+    return { characters: description.length, vision: true };
+  }
 
   const bytes = await getStorage().get(doc.storageKey); // storage errors are retried
 

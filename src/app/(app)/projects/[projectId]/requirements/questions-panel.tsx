@@ -61,7 +61,7 @@ export function QuestionsPanel({
   }
 
   return (
-    <Card>
+    <Card id="questions">
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
         <div>
           <CardTitle>Open questions ({open} open)</CardTitle>
@@ -78,7 +78,7 @@ export function QuestionsPanel({
       <CardContent className="flex flex-col gap-3">
         {error && <Alert tone="error">{error}</Alert>}
         {adding && (
-          <form onSubmit={add} className="flex flex-col gap-3 rounded-lg bg-slate-50 p-4">
+          <form onSubmit={add} className="bg-page flex flex-col gap-3 rounded-lg p-4">
             <Field label="Question" htmlFor="new-question">
               <Textarea id="new-question" name="question" required minLength={5} maxLength={1000} />
             </Field>
@@ -101,7 +101,7 @@ export function QuestionsPanel({
           </form>
         )}
         {questions.length === 0 ? (
-          <p className="flex items-center gap-2 rounded-lg bg-slate-50 p-4 text-slate-600">
+          <p className="bg-page text-muted flex items-center gap-2 rounded-lg p-4">
             <HelpCircle className="size-5" aria-hidden /> No questions yet.
           </p>
         ) : (
@@ -133,18 +133,16 @@ function QuestionRow({
   const [answer, setAnswer] = useState(q.answer ?? "");
   const dismissed = q.status === "DISMISSED";
   return (
-    <li className={`rounded-lg border border-slate-200 p-4 ${dismissed ? "opacity-60" : ""}`}>
+    <li className={`border-line rounded-lg border p-4 ${dismissed ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge
           tone={q.status === "ANSWERED" ? "success" : q.status === "OPEN" ? "warning" : "neutral"}
         >
           {q.status === "ANSWERED" ? "Answered" : q.status === "OPEN" ? "Open" : "Dismissed"}
         </Badge>
-        {q.requirement && (
-          <span className="font-mono text-sm text-slate-600">{q.requirement.key}</span>
-        )}
+        {q.requirement && <span className="text-muted font-mono text-sm">{q.requirement.key}</span>}
       </div>
-      <p className="mt-2 font-medium text-slate-900">{q.question}</p>
+      <p className="text-ink mt-2 font-medium">{q.question}</p>
       {canWrite && !dismissed ? (
         <div className="mt-3 flex flex-col gap-2">
           <label htmlFor={`answer-${q.id}`} className="sr-only">
@@ -170,12 +168,12 @@ function QuestionRow({
             </Button>
           </div>
           {q.answeredBy && (
-            <p className="text-xs text-slate-500">Last answered by {q.answeredBy.name}</p>
+            <p className="text-muted text-xs">Last answered by {q.answeredBy.name}</p>
           )}
         </div>
       ) : (
         <>
-          {q.answer && <p className="mt-2 text-slate-700">{q.answer}</p>}
+          {q.answer && <p className="text-ink-2 mt-2">{q.answer}</p>}
           {canWrite && dismissed && (
             <Button
               size="sm"

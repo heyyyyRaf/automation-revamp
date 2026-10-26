@@ -1,14 +1,20 @@
 "use client";
 
-import { Check, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { PlusIcon } from "@/components/icons";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
-import type { TestCaseItem } from "@/lib/types";
-import { PRIORITY_VALUES, TEST_CASE_TYPE_VALUES } from "@/lib/validation";
+import {
+  PRIORITIES,
+  TEST_CASE_TYPE_LABELS,
+  TEST_CASE_TYPES,
+  type PriorityName,
+  type TestCaseTypeName,
+} from "@/lib/domain";
+import type { ScenarioItem, TestCaseItem } from "@/lib/types";
 
 export interface RequirementOption {
   id: string;
@@ -21,109 +27,120 @@ interface Step {
   expected: string;
 }
 
+const NEW_SCENARIO = "__new__";
+const cap = (s: string) => s.charAt(0) + s.slice(1).toLowerCase();
+
+/**
+ * Add or edit a test case. FR-4.3: every field is required (use "none" when no test data is
+ * needed). Saving a case that isn't a draft sends it back to Draft.
+ */
 export function TestCaseDialog({
   projectId,
   testCase,
   requirements,
-  canWrite,
-  canReview,
+  scenarios,
   onClose,
   onSaved,
-  onReview,
 }: {
   projectId: string;
   testCase: TestCaseItem | null;
   requirements: RequirementOption[];
-  canWrite: boolean;
-  canReview: boolean;
+  scenarios: ScenarioItem[];
   onClose: () => void;
-  onSaved: (message: string) => void;
-  onReview: (decision: "APPROVE" | "REJECT" | "REOPEN") => void;
+  onSaved: (message: string, id?: string) => void;
 }) {
   const [title, setTitle] = useState(testCase?.title ?? "");
+  const [scenarioId, setScenarioId] = useState(
+    testCase?.scenario?.id ?? scenarios[0]?.id ?? NEW_SCENARIO,
+  );
+  const [newScenario, setNewScenario] = useState("");
   const [preconditions, setPreconditions] = useState(testCase?.preconditions ?? "");
   const [steps, setSteps] = useState<Step[]>(
     testCase?.steps.map((s) => ({ action: s.action, expected: s.expected ?? "" })) ?? [
       { action: "", expected: "" },
     ],
   );
-  const [testData, setTestData] = useState(testCase?.testData ?? []);
-  const [expectedResult, setExpectedResult] = useState(testCase?.expectedResult ?? "");
-  const [type, setType] = useState<TestCaseItem["type"]>(testCase?.type ?? "POSITIVE");
-  const [priority, setPriority] = useState<TestCaseItem["priority"]>(
-    testCase?.priority ?? "MEDIUM",
+  const [testData, setTestData] = useState(
+    testCase?.testData.length ? testCase.testData : [{ name: "", value: "" }],
   );
+  const [expectedResult, setExpectedResult] = useState(testCase?.expectedResult ?? "");
+  const [type, setType] = useState<TestCaseTypeName>(testCase?.type ?? "POSITIVE");
+  const [priority, setPriority] = useState<PriorityName>(testCase?.priority ?? "MEDIUM");
   const [automatable, setAutomatable] = useState(testCase?.automatable ?? true);
   const [automatableReason, setAutomatableReason] = useState(testCase?.automatableReason ?? "");
+  const [tags, setTags] = useState((testCase?.tags ?? []).join(", "));
   const [reqIds, setReqIds] = useState<Set<string>>(
     new Set(testCase?.requirements.map((r) => r.id) ?? []),
   );
   const [error, setError] = useState<ApiError | null>(null);
   const [pending, setPending] = useState(false);
-  const readOnly = !canWrite;
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
     setError(null);
-    const body = {
-      title,
-      preconditions: preconditions || null,
-      steps: steps
-        .filter((s) => s.action.trim())
-        .map((s) => ({ action: s.action, expected: s.expected || null })),
-      testData: testData.filter((d) => d.name.trim()),
-      expectedResult,
-      type,
-      priority,
-      automatable,
-      automatableReason: automatableReason || null,
-      requirementIds: [...reqIds],
-    };
+    const base = `/api/projects/${projectId}`;
     try {
-      const base = `/api/projects/${projectId}/test-cases`;
-      if (testCase) await api(`${base}/${testCase.id}`, { method: "PATCH", json: body });
-      else await api(base, { json: body });
-      onSaved(
-        testCase
-          ? testCase.status === "DRAFT"
+      let sid = scenarioId;
+      if (sid === NEW_SCENARIO) {
+        const { scenario } = await api<{ scenario: { id: string } }>(`${base}/scenarios`, {
+          json: { title: newScenario },
+        });
+        sid = scenario.id;
+        setScenarioId(sid);
+      }
+      const body = {
+        title,
+        scenarioId: sid,
+        preconditions,
+        steps: steps
+          .filter((s) => s.action.trim())
+          .map((s) => ({ action: s.action, expected: s.expected || null })),
+        testData: testData.filter((d) => d.name.trim() || d.value.trim()),
+        expectedResult,
+        type,
+        priority,
+        automatable,
+        automatableReason,
+        tags: tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        requirementIds: [...reqIds],
+      };
+      if (testCase) {
+        await api(`${base}/test-cases/${testCase.id}`, { method: "PATCH", json: body });
+        onSaved(
+          testCase.status === "DRAFT"
             ? `${testCase.key} was saved.`
-            : `${testCase.key} was saved and moved back to draft for re-approval.`
-          : "Test case added.",
-      );
+            : `${testCase.key} was saved and moved back to Draft for approval.`,
+          testCase.id,
+        );
+      } else {
+        const { testCase: created } = await api<{ testCase: { id: string; key: string } }>(
+          `${base}/test-cases`,
+          { json: body },
+        );
+        onSaved(`${created.key} was added as a draft.`, created.id);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err : new ApiError("Couldn't save.", 0, "UNKNOWN"));
       setPending(false);
     }
   }
 
-  async function remove() {
-    if (!testCase || !window.confirm(`Delete ${testCase.key}?`)) return;
-    try {
-      await api(`/api/projects/${projectId}/test-cases/${testCase.id}`, { method: "DELETE" });
-      onSaved(`${testCase.key} was deleted.`);
-    } catch (err) {
-      setError(err instanceof ApiError ? err : new ApiError("Couldn't delete.", 0, "UNKNOWN"));
-    }
-  }
-
   const fe = (k: string) => error?.fieldErrors[k]?.[0];
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent
-        title={testCase ? `${testCase.key} · ${testCase.status.toLowerCase()}` : "Add a test case"}
-      >
+      <DialogContent wide title={testCase ? `Edit ${testCase.key}` : "Add a test case"}>
         <form onSubmit={save} className="flex flex-col gap-4">
           {error && Object.keys(error.fieldErrors).length === 0 && (
             <Alert tone="error">{error.message}</Alert>
           )}
-          {testCase?.status === "REJECTED" && testCase.rejectionReason && (
-            <Alert tone="error" title="Rejected">
-              {testCase.rejectionReason}
+          {testCase && testCase.status !== "DRAFT" && (
+            <Alert tone="info">
+              Saving changes moves this test case back to Draft for approval.
             </Alert>
-          )}
-          {testCase?.status === "APPROVED" && canWrite && (
-            <Alert tone="info">Saving changes moves this approved test case back to draft.</Alert>
           )}
 
           <Field label="Title" htmlFor="tc-title" error={fe("title")}>
@@ -133,21 +150,51 @@ export function TestCaseDialog({
               onChange={(e) => setTitle(e.target.value)}
               required
               maxLength={200}
-              readOnly={readOnly}
             />
           </Field>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Scenario" htmlFor="tc-scenario" error={fe("scenarioId")}>
+              <Select
+                id="tc-scenario"
+                value={scenarioId}
+                onChange={(e) => setScenarioId(e.target.value)}
+              >
+                {scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.key} {s.title}
+                  </option>
+                ))}
+                <option value={NEW_SCENARIO}>+ New scenario…</option>
+              </Select>
+            </Field>
+            {scenarioId === NEW_SCENARIO && (
+              <Field label="New scenario name" htmlFor="tc-new-scenario">
+                <Input
+                  id="tc-new-scenario"
+                  value={newScenario}
+                  onChange={(e) => setNewScenario(e.target.value)}
+                  required
+                  minLength={3}
+                  maxLength={200}
+                  placeholder="e.g. Employee files a leave request"
+                />
+              </Field>
+            )}
+          </div>
+
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-medium text-slate-800">Covers requirements</legend>
-            {fe("requirementIds") && <p className="text-sm text-red-600">{fe("requirementIds")}</p>}
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 p-2">
+            <legend className="text-ink-2 text-sm font-semibold">Covers requirements</legend>
+            {fe("requirementIds") && (
+              <p className="text-warn text-[13px]">{fe("requirementIds")}</p>
+            )}
+            <div className="border-line max-h-40 overflow-y-auto rounded-lg border p-2">
               {requirements.map((r) => (
                 <label key={r.id} className="flex min-h-11 items-start gap-2 py-1 text-sm">
                   <input
                     type="checkbox"
                     className="accent-accent mt-0.5 size-5"
                     checked={reqIds.has(r.id)}
-                    disabled={readOnly}
                     onChange={() =>
                       setReqIds((s) => {
                         const next = new Set(s);
@@ -158,30 +205,35 @@ export function TestCaseDialog({
                     }
                   />
                   <span>
-                    <span className="font-mono font-semibold">{r.key}</span> {r.text}
+                    <span className="font-mono">{r.key}</span> {r.text}
                   </span>
                 </label>
               ))}
             </div>
           </fieldset>
 
-          <Field label="Preconditions (optional)" htmlFor="tc-pre">
+          <Field
+            label="Preconditions"
+            htmlFor="tc-pre"
+            hint="Write “None” if there are none."
+            error={fe("preconditions")}
+          >
             <Textarea
               id="tc-pre"
               value={preconditions}
               onChange={(e) => setPreconditions(e.target.value)}
+              required
               maxLength={2000}
-              readOnly={readOnly}
             />
           </Field>
 
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-medium text-slate-800">Steps</legend>
-            {fe("steps") && <p className="text-sm text-red-600">{fe("steps")}</p>}
+            <legend className="text-ink-2 text-sm font-semibold">Steps</legend>
+            {fe("steps") && <p className="text-warn text-[13px]">{fe("steps")}</p>}
             <ol className="flex flex-col gap-2">
               {steps.map((s, i) => (
                 <li key={i} className="flex gap-2">
-                  <span className="mt-3 w-6 text-sm text-slate-500">{i + 1}.</span>
+                  <span className="text-muted mt-3 w-6 text-sm">{i + 1}.</span>
                   <div className="flex flex-1 flex-col gap-1">
                     <label htmlFor={`step-${i}`} className="sr-only">
                       Step {i + 1} action
@@ -190,7 +242,6 @@ export function TestCaseDialog({
                       id={`step-${i}`}
                       placeholder="Action"
                       value={s.action}
-                      readOnly={readOnly}
                       onChange={(e) =>
                         setSteps((ss) =>
                           ss.map((x, j) => (j === i ? { ...x, action: e.target.value } : x)),
@@ -204,7 +255,6 @@ export function TestCaseDialog({
                       id={`step-exp-${i}`}
                       placeholder="Expected (optional)"
                       value={s.expected}
-                      readOnly={readOnly}
                       onChange={(e) =>
                         setSteps((ss) =>
                           ss.map((x, j) => (j === i ? { ...x, expected: e.target.value } : x)),
@@ -212,7 +262,7 @@ export function TestCaseDialog({
                       }
                     />
                   </div>
-                  {!readOnly && steps.length > 1 && (
+                  {steps.length > 1 && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -220,23 +270,21 @@ export function TestCaseDialog({
                       aria-label={`Remove step ${i + 1}`}
                       onClick={() => setSteps((ss) => ss.filter((_, j) => j !== i))}
                     >
-                      <Trash2 aria-hidden />
+                      Remove
                     </Button>
                   )}
                 </li>
               ))}
             </ol>
-            {!readOnly && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="self-start"
-                onClick={() => setSteps((ss) => [...ss, { action: "", expected: "" }])}
-              >
-                <Plus aria-hidden /> Add step
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              onClick={() => setSteps((ss) => [...ss, { action: "", expected: "" }])}
+            >
+              <PlusIcon /> Add step
+            </Button>
           </fieldset>
 
           <Field label="Expected result" htmlFor="tc-expected" error={fe("expectedResult")}>
@@ -246,16 +294,16 @@ export function TestCaseDialog({
               onChange={(e) => setExpectedResult(e.target.value)}
               required
               maxLength={2000}
-              readOnly={readOnly}
             />
           </Field>
 
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-medium text-slate-800">Test data</legend>
-            <p className="text-sm text-slate-500">
-              Use placeholders like {"{{STANDARD_USER}}"} for accounts — real credentials are added
-              safely per environment later.
+            <legend className="text-ink-2 text-sm font-semibold">Test data</legend>
+            <p className="text-muted text-[13px]">
+              Use placeholders like {"{{STANDARD_USER}}"} for accounts — real credentials are kept
+              safely per environment. If nothing is needed, enter “none”.
             </p>
+            {fe("testData") && <p className="text-warn text-[13px]">{fe("testData")}</p>}
             {testData.map((d, i) => (
               <div key={i} className="flex gap-2">
                 <label htmlFor={`td-name-${i}`} className="sr-only">
@@ -265,7 +313,6 @@ export function TestCaseDialog({
                   id={`td-name-${i}`}
                   placeholder="Name"
                   value={d.name}
-                  readOnly={readOnly}
                   className="w-1/3"
                   onChange={(e) =>
                     setTestData((ts) =>
@@ -280,14 +327,13 @@ export function TestCaseDialog({
                   id={`td-value-${i}`}
                   placeholder="Value"
                   value={d.value}
-                  readOnly={readOnly}
                   onChange={(e) =>
                     setTestData((ts) =>
                       ts.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)),
                     )
                   }
                 />
-                {!readOnly && (
+                {testData.length > 1 && (
                   <Button
                     type="button"
                     variant="ghost"
@@ -295,22 +341,20 @@ export function TestCaseDialog({
                     aria-label="Remove value"
                     onClick={() => setTestData((ts) => ts.filter((_, j) => j !== i))}
                   >
-                    <Trash2 aria-hidden />
+                    Remove
                   </Button>
                 )}
               </div>
             ))}
-            {!readOnly && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="self-start"
-                onClick={() => setTestData((ts) => [...ts, { name: "", value: "" }])}
-              >
-                <Plus aria-hidden /> Add value
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              onClick={() => setTestData((ts) => [...ts, { name: "", value: "" }])}
+            >
+              <PlusIcon /> Add value
+            </Button>
           </fieldset>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -318,12 +362,11 @@ export function TestCaseDialog({
               <Select
                 id="tc-type"
                 value={type}
-                disabled={readOnly}
-                onChange={(e) => setType(e.target.value as TestCaseItem["type"])}
+                onChange={(e) => setType(e.target.value as TestCaseTypeName)}
               >
-                {TEST_CASE_TYPE_VALUES.map((t) => (
+                {TEST_CASE_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t.charAt(0) + t.slice(1).toLowerCase()}
+                    {TEST_CASE_TYPE_LABELS[t]}
                   </option>
                 ))}
               </Select>
@@ -332,12 +375,11 @@ export function TestCaseDialog({
               <Select
                 id="tc-priority"
                 value={priority}
-                disabled={readOnly}
-                onChange={(e) => setPriority(e.target.value as TestCaseItem["priority"])}
+                onChange={(e) => setPriority(e.target.value as PriorityName)}
               >
-                {PRIORITY_VALUES.map((p) => (
+                {PRIORITIES.map((p) => (
                   <option key={p} value={p}>
-                    {p.charAt(0) + p.slice(1).toLowerCase()}
+                    {cap(p)}
                   </option>
                 ))}
               </Select>
@@ -349,52 +391,49 @@ export function TestCaseDialog({
               type="checkbox"
               className="accent-accent size-5"
               checked={automatable}
-              disabled={readOnly}
               onChange={(e) => setAutomatable(e.target.checked)}
             />
-            <span className="text-sm font-medium">Can be automated with Playwright</span>
+            <span className="text-sm font-semibold">
+              Can be automated in a browser (otherwise Manual-only)
+            </span>
           </label>
-          <Field label="Why / why not (optional)" htmlFor="tc-auto-reason">
+          <Field
+            label={automatable ? "Why it can be automated" : "Why it must be tested by hand"}
+            htmlFor="tc-auto-reason"
+            error={fe("automatableReason")}
+          >
             <Input
               id="tc-auto-reason"
               value={automatableReason}
               onChange={(e) => setAutomatableReason(e.target.value)}
+              required
               maxLength={500}
-              readOnly={readOnly}
+              placeholder={
+                automatable ? "e.g. Deterministic UI steps" : "e.g. Needs a real email inbox"
+              }
+            />
+          </Field>
+          <Field
+            label="Tags (optional)"
+            htmlFor="tc-tags"
+            hint="Comma-separated, e.g. smoke, login."
+            error={fe("tags")}
+          >
+            <Input
+              id="tc-tags"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              maxLength={300}
             />
           </Field>
 
-          <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-            {canWrite && (
-              <Button type="submit" disabled={pending}>
-                {pending ? "Saving…" : "Save"}
-              </Button>
-            )}
-            {testCase && canReview && testCase.status !== "APPROVED" && (
-              <Button type="button" variant="secondary" onClick={() => onReview("APPROVE")}>
-                <Check aria-hidden /> Approve
-              </Button>
-            )}
-            {testCase && canReview && testCase.status !== "REJECTED" && (
-              <Button type="button" variant="secondary" onClick={() => onReview("REJECT")}>
-                <X aria-hidden /> Reject
-              </Button>
-            )}
-            {testCase && canReview && testCase.status !== "DRAFT" && (
-              <Button type="button" variant="ghost" onClick={() => onReview("REOPEN")}>
-                <RotateCcw aria-hidden /> Back to draft
-              </Button>
-            )}
-            {testCase && canWrite && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="ml-auto text-red-700"
-                onClick={() => void remove()}
-              >
-                <Trash2 aria-hidden /> Delete
-              </Button>
-            )}
+          <div className="border-line-soft flex flex-wrap gap-2 border-t pt-4">
+            <Button type="submit" disabled={pending}>
+              {pending ? "Saving…" : testCase ? "Save changes" : "Add test case"}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
           </div>
         </form>
       </DialogContent>

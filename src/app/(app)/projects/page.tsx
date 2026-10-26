@@ -1,89 +1,133 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { FolderKanban, FileText, Users } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Alert } from "@/components/ui/alert";
 import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/states";
+import { firstName } from "@/lib/format";
 import { can } from "@/lib/permissions";
-import { formatDate } from "@/lib/utils";
 import { requireAuthPage } from "@/server/auth/current-user";
-import { listProjects } from "@/server/services/projects";
+import { dashboardStats, listProjects } from "@/server/services/projects";
+import { listUsers } from "@/server/services/users";
 import { CreateProjectDialog } from "./create-project-dialog";
+import { ProjectsDashboard } from "./projects-dashboard";
 
 export const metadata: Metadata = { title: "Projects" };
+
+const PICK_LABEL: Record<string, string> = {
+  "test-cases": "test cases",
+  scripts: "test scripts",
+  runs: "runs and reports",
+};
 
 export default async function ProjectsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string }>;
+  searchParams: Promise<{ archived?: string; pick?: string }>;
 }) {
   const auth = await requireAuthPage();
-  const showArchived = (await searchParams).archived === "1";
+  const { archived, pick } = await searchParams;
+  const showArchived = archived === "1";
   const projects = await listProjects(auth, { includeArchived: showArchived });
+  const stats = await dashboardStats(auth, projects);
   const canCreate = can(auth.user.role, "projects:create");
+  const isAdmin = auth.user.role === "ADMIN";
+  const owners = isAdmin
+    ? (await listUsers())
+        .filter((u) => u.isActive && u.role !== "VIEWER")
+        .map((u) => ({ id: u.id, name: u.name }))
+    : [];
+
+  const tiles = [
+    {
+      label: "Active projects",
+      value: String(stats.activeProjects),
+      note: `${stats.addedThisWeek} added this week`,
+    },
+    {
+      label: "Tests run this week",
+      value: stats.testsRunThisWeek.toLocaleString(),
+      note: `across ${stats.projectsRunThisWeek} project${stats.projectsRunThisWeek === 1 ? "" : "s"}`,
+    },
+    {
+      label: "Average pass rate",
+      value: stats.averagePassRate === null ? "—" : `${stats.averagePassRate}%`,
+      note: "last run per project",
+    },
+    {
+      label: "Waiting for your review",
+      value: stats.awaitingReview.toLocaleString(),
+      note: "test cases in Draft",
+    },
+  ];
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Projects</h1>
-          <p className="mt-1 text-slate-600">
-            Each project holds one app&apos;s requirements, test cases and test runs.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <ProjectsDashboard
+      title={`Welcome back, ${firstName(auth.user.name)}`}
+      subtitle="Here is how every project is doing today."
+      canCreate={canCreate}
+      actions={
+        <>
           <Link
             href={showArchived ? "/projects" : "/projects?archived=1"}
-            className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-slate-700 hover:bg-slate-100"
+            className="text-sm font-semibold"
           >
             {showArchived ? "Hide archived" : "Show archived"}
           </Link>
-          {canCreate && <CreateProjectDialog />}
-        </div>
-      </div>
-
-      {projects.length === 0 ? (
-        <EmptyState
-          icon={<FolderKanban />}
-          title="No projects yet"
-          description={
-            canCreate
-              ? "Create your first project, then upload its requirements to get started."
-              : "You haven't been added to any project yet. Ask your Admin / QA Lead to add you."
-          }
-          action={canCreate ? <CreateProjectDialog /> : undefined}
-        />
-      ) : (
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((p) => (
-            <li key={p.id}>
-              <Link
-                href={`/projects/${p.id}`}
-                className="focus-visible:ring-accent block h-full rounded-xl focus-visible:ring-2 focus-visible:outline-none"
-              >
-                <Card className="hover:border-accent/50 flex h-full flex-col gap-3 p-5 transition-colors">
-                  <div className="flex items-start justify-between gap-2">
-                    <h2 className="text-lg font-semibold">{p.name}</h2>
-                    {p.status === "ARCHIVED" && <Badge>Archived</Badge>}
-                  </div>
-                  {p.description && (
-                    <p className="line-clamp-2 text-sm text-slate-600">{p.description}</p>
-                  )}
-                  <div className="mt-auto flex items-center gap-4 text-sm text-slate-500">
-                    <span className="inline-flex items-center gap-1">
-                      <FileText className="size-4" aria-hidden /> {p.documentCount} files
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <Users className="size-4" aria-hidden /> {p.memberCount} members
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400">Updated {formatDate(p.updatedAt)}</p>
-                </Card>
-              </Link>
-            </li>
+          {canCreate && <CreateProjectDialog owners={owners} currentUserId={auth.user.id} />}
+        </>
+      }
+      notice={
+        pick && PICK_LABEL[pick] ? (
+          <Alert tone="info">Choose a project to open its {PICK_LABEL[pick]}.</Alert>
+        ) : undefined
+      }
+      tiles={
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
+          {tiles.map((t) => (
+            <Card key={t.label} className="flex flex-col gap-1.5 p-5">
+              <div className="text-muted text-[13px] font-medium">{t.label}</div>
+              <div className="text-[30px] font-bold">{t.value}</div>
+              <div className="text-muted text-[13px]">{t.note}</div>
+            </Card>
           ))}
-        </ul>
-      )}
-    </div>
+        </div>
+      }
+      aside={
+        <Card className="flex flex-[1_1_300px] flex-col gap-[18px] p-6">
+          <h2 className="text-[17px] font-bold">New here? Three steps</h2>
+          {[
+            ["Upload the requirements", "FRD, user stories, Figma screenshots or flow diagrams."],
+            [
+              "Review the drafted test cases",
+              "Edit, approve or reject. Nothing runs without your OK.",
+            ],
+            ["Add the app URL and run", "Get a report with screenshots of every failure."],
+          ].map(([title, text], i) => (
+            <div key={title} className="flex gap-3.5">
+              <div className="bg-accent-soft text-accent-strong flex size-8 shrink-0 items-center justify-center rounded-full font-bold">
+                {i + 1}
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="font-semibold">{title}</div>
+                <div className="text-muted text-[13px] leading-normal">{text}</div>
+              </div>
+            </div>
+          ))}
+          {canCreate && (
+            <CreateProjectDialog owners={owners} currentUserId={auth.user.id} trigger="outline" />
+          )}
+        </Card>
+      }
+      projects={projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        ownerName: p.owner.name,
+        stage: p.stage,
+        lastPassRate: p.lastPassRate,
+        testCaseCount: p.testCaseCount,
+        draftCount: p.draftCount,
+        activity: { kind: p.activity.kind, at: p.activity.at.toISOString() },
+      }))}
+    />
   );
 }

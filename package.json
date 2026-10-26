@@ -17,9 +17,10 @@
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run test:unit && npm run test:integration",
+    "test": "npm run test:unit && npm run test:integration && npm run test:sandbox",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
+    "test:sandbox": "vitest run --project sandbox",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -29,8 +30,12 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1156.0",
+    "@fontsource-variable/plus-jakarta-sans": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@monaco-editor/react": "4.7.0",
     "@napi-rs/canvas": "1.0.13",
     "@node-rs/argon2": "2.2.2",
+    "@playwright/test": "1.64.1",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "@tesseract.js-data/eng": "1.0.0",
@@ -39,10 +44,12 @@
     "clsx": "2.1.1",
     "docx": "9.14.0",
     "dotenv": "18.0.9",
+    "fflate": "0.8.3",
     "file-type": "22.2.0",
     "ioredis": "5.11.1",
     "lucide-react": "1.61.0",
     "mammoth": "1.13.0",
+    "monaco-editor": "0.57.0",
     "next": "16.4.2",
     "openai": "7.43.0",
     "papaparse": "5.7.0",
@@ -57,12 +64,12 @@
     "sharp": "0.35.5",
     "tailwind-merge": "3.7.0",
     "tesseract.js": "7.0.0",
+    "typescript": "6.0.3",
     "unpdf": "1.9.1",
     "write-excel-file": "4.1.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.19.2",
     "@types/papaparse": "5.5.2",
@@ -81,7 +88,6 @@
     "read-excel-file": "9.3.12",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.15",
-    "typescript": "6.0.3",
     "typescript-eslint": "8.72.0",
     "vite": "8.3.5",
     "vitest": "5.0.5"
@@ -93,5 +99,8 @@
     "unrs-resolver@1.12.2": true,
     "tesseract.js": false,
     "msgpackr-extract": false
+  },
+  "overrides": {
+    "dompurify": "3.4.17"
   }
 }

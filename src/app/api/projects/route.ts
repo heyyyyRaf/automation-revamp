@@ -1,10 +1,11 @@
 import { createProjectSchema } from "@/lib/validation";
 import { json, readJson, route } from "@/server/http/handler";
-import { createProject, listProjects } from "@/server/services/projects";
+import { createProject, dashboardStats, listProjects } from "@/server/services/projects";
 
 export const GET = route(async ({ auth, req }) => {
   const includeArchived = req.nextUrl.searchParams.get("archived") === "1";
-  return json({ projects: await listProjects(auth, { includeArchived }) });
+  const projects = await listProjects(auth, { includeArchived });
+  return json({ projects, stats: await dashboardStats(auth, projects) });
 });
 
 export const POST = route(async ({ auth, req, ip, requestId }) => {

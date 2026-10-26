@@ -59,15 +59,24 @@ describe("upload endpoint", () => {
     });
   });
 
-  it("accepts DOCX, and images without queuing extraction", async () => {
-    expect((await upload("REQUIREMENTS", "stories.docx", makeDocx(["As a user…"]))).status).toBe(
-      201,
+  it("accepts DOCX, and queues images for the vision description (FR-2.2)", async () => {
+    const docx = await upload("REQUIREMENTS", "stories.docx", makeDocx(["As a user…"]));
+    expect(docx.status).toBe(201);
+    // FR-2.3: the tag defaults from the group and the file name.
+    expect((await jsonOf<{ document: { typeTag: string } }>(docx)).document.typeTag).toBe(
+      "USER_STORY",
     );
     const img = await upload("FIGMA", "frame.jpg", await makeJpegWithExif("owner"));
     expect(img.status).toBe(201);
-    expect(
-      (await jsonOf<{ document: { extractionStatus: string } }>(img)).document.extractionStatus,
-    ).toBe("NOT_APPLICABLE");
+    const { document } = await jsonOf<{
+      document: { id: string; extractionStatus: string; typeTag: string };
+    }>(img);
+    expect(document).toMatchObject({ extractionStatus: "PENDING", typeTag: "FIGMA" });
+    const dispatched = (getDispatcher() as RecordingDispatcher).dispatched;
+    expect(dispatched.at(-1)).toMatchObject({
+      type: "EXTRACT_TEXT",
+      payload: { documentId: document.id },
+    });
   });
 
   it("rejects a spoofed executable with 415 and stores nothing", async () => {

@@ -89,6 +89,7 @@ export async function createProject(name: string, memberIds: string[] = [], crea
     data: {
       name,
       createdById: creator,
+      ownerId: creator,
       members: { create: memberIds.map((userId) => ({ userId })) },
     },
   });

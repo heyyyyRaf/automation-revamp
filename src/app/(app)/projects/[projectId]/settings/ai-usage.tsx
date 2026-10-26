@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
 import type { AiBudgetItem } from "@/lib/types";
+import { ProgressBar } from "@/components/ui/progress-bar";
 
 const fmt = (n: number) => n.toLocaleString();
 
@@ -41,23 +42,22 @@ export function AiUsage({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg bg-slate-50 p-4 text-sm">
+    <div className="bg-page flex flex-col gap-2 rounded-lg p-4 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-medium text-slate-700">AI usage this month</span>
-        <span className="text-slate-600">
+        <span className="text-ink-2 font-semibold">AI usage this month</span>
+        <span className="text-muted">
           {fmt(budget.used)} of {fmt(budget.cap)} tokens ({pct}%)
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-slate-200" aria-hidden>
-        <div
-          className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-accent"}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <ProgressBar
+        value={pct}
+        label={`AI usage ${pct}% of the monthly limit`}
+        barClass={pct >= 70 ? "bg-warn-bar" : "bg-accent"}
+      />
       {canEdit &&
         (editing ? (
           <form onSubmit={save} className="flex flex-wrap items-center gap-2">
-            <label htmlFor="token-cap" className="text-slate-700">
+            <label htmlFor="token-cap" className="text-ink-2">
               Monthly limit (tokens)
             </label>
             <Input
@@ -73,8 +73,8 @@ export function AiUsage({
             <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
               Cancel
             </Button>
-            {error && <span className="text-red-600">{error}</span>}
-            <span className="w-full text-slate-500">Leave empty to use the default limit.</span>
+            {error && <span className="text-warn">{error}</span>}
+            <span className="text-muted w-full">Leave empty to use the default limit.</span>
           </form>
         ) : (
           <div>

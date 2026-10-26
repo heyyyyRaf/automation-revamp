@@ -39,21 +39,35 @@ describe("permissions matrix", () => {
     "testcases:review",
     "ai:run",
     "exports:create",
+    "targets:request",
     "targets:approve",
+    "environments:manage",
+    "scripts:write",
+    "scripts:approve",
+    "runs:start",
+    "runs:control",
+    "comments:create",
+    "settings:manage",
   ];
 
   it("Admin can do everything", () => {
     for (const p of all) expect(can("ADMIN", p)).toBe(true);
   });
 
-  it("QA Tester can read and upload, but not administer", () => {
-    expect(can("QA_TESTER", "documents:write")).toBe(true);
+  it("QA Tester works on projects (FRD: creates them too), but does not administer", () => {
+    for (const p of [
+      "documents:write",
+      "projects:create",
+      "projects:edit",
+      "comments:create",
+    ] as const) {
+      expect(can("QA_TESTER", p)).toBe(true);
+    }
     for (const p of [
       "users:manage",
-      "projects:create",
-      "projects:archive",
       "projects:manage-members",
       "targets:approve",
+      "settings:manage",
     ] as const) {
       expect(can("QA_TESTER", p)).toBe(false);
     }
@@ -61,7 +75,12 @@ describe("permissions matrix", () => {
 
   it("Viewer is read-only (exporting the scope only reads data)", () => {
     const allowed = all.filter((p) => can("VIEWER", p));
-    expect(allowed.every((p) => p.endsWith(":read") || p === "exports:create")).toBe(true);
+    // Viewers may also comment (FRD roles table); comments never change project data.
+    expect(
+      allowed.every(
+        (p) => p.endsWith(":read") || p === "exports:create" || p === "comments:create",
+      ),
+    ).toBe(true);
     for (const p of [
       "requirements:write",
       "testcases:write",

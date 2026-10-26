@@ -25,10 +25,23 @@ export type Permission =
   | "testcases:review"
   | "ai:run"
   | "exports:create"
-  | "targets:approve";
+  | "targets:request"
+  | "targets:approve"
+  | "environments:manage"
+  | "scripts:write"
+  | "scripts:approve"
+  | "runs:start"
+  | "runs:control"
+  | "comments:create"
+  | "settings:manage";
 
+/** FRD roles table: "the QA Tester does almost everything". */
 const TESTER: readonly Permission[] = [
   "projects:read",
+  "projects:create",
+  "projects:edit",
+  "projects:archive",
+  "comments:create",
   "documents:read",
   "documents:write",
   "requirements:write",
@@ -36,21 +49,28 @@ const TESTER: readonly Permission[] = [
   "testcases:review",
   "ai:run",
   "exports:create",
+  "targets:request",
+  "environments:manage",
+  "scripts:write",
+  "scripts:approve",
+  "runs:start",
+  "runs:control",
 ];
 
 const MATRIX: Record<RoleName, readonly Permission[]> = {
+  // Lead / Admin: everything a tester can, plus users, AI/model settings, the URL allowlist
+  // and shared environments. Project owners may also manage their own project's members.
   ADMIN: [
     ...TESTER,
     "users:manage",
-    "projects:create",
-    "projects:archive",
     "projects:manage-members",
-    "projects:edit",
     "targets:approve",
+    "settings:manage",
   ],
   QA_TESTER: TESTER,
+  // FRD: viewers see test cases and reports for their project and can comment.
   // Exporting the test scope only reads project data, so viewers may do it.
-  VIEWER: ["projects:read", "documents:read", "exports:create"],
+  VIEWER: ["projects:read", "documents:read", "exports:create", "comments:create"],
 };
 
 export function can(role: RoleName, permission: Permission): boolean {

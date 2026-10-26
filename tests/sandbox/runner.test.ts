@@ -1,0 +1,265 @@
+/**
+ * Real end-to-end sandbox tests: real Chromium, the real runner bundle, the real harness and
+ * reporter, and the real egress proxy — in local mode (a child process instead of a container).
+ */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runInSandbox, type SandboxSession } from "@/server/sandbox/sandbox";
+import type { RunnerEvent } from "@/server/sandbox/protocol";
+import { DEMO_USER, startDemoSite, type DemoSite } from "../support/demo-site";
+
+let site: DemoSite;
+
+beforeAll(async () => {
+  site = await startDemoSite();
+});
+afterAll(async () => {
+  await site.close();
+});
+
+const base = () => ({
+  baseURL: site.origin,
+  storageState: null,
+  accounts: { "Standard user": DEMO_USER },
+  vars: { SHOP_NAME: "Demo Shop" },
+  testTimeoutMs: 30_000,
+  tests: [],
+});
+
+async function collect(
+  run: Parameters<typeof runInSandbox>[0],
+  onEvent?: (e: RunnerEvent, session: SandboxSession | null) => void,
+): Promise<RunnerEvent[]> {
+  const events: RunnerEvent[] = [];
+  let session: SandboxSession | null = null;
+  for await (const e of runInSandbox({ ...run, onSession: (s) => (session = s) })) {
+    events.push(e);
+    onEvent?.(e, session);
+  }
+  return events;
+}
+
+const origins = () => [{ origin: site.origin, allowPrivate: true }];
+
+describe("capture", () => {
+  it("captures the accessibility tree and interactive elements of a page", async () => {
+    const events = await collect({
+      sessionId: "capture-test-1",
+      label: "test",
+      origins: origins(),
+      input: { ...base(), mode: "capture", capture: { path: "/login" } },
+      timeoutMs: 60_000,
+    });
+    const cap = events.find((e) => e.t === "capture");
+    expect(cap?.t).toBe("capture");
+    if (cap?.t !== "capture") return;
+    expect(cap.snapshot.title).toBe("Sign in");
+    expect(cap.snapshot.aria).toContain('button "Sign in"');
+    expect(cap.snapshot.elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "textbox", label: "Email" }),
+        expect.objectContaining({ role: "button", name: "Sign in" }),
+      ]),
+    );
+    expect(cap.screenshot?.length).toBeGreaterThan(1000);
+  });
+});
+
+describe("login", () => {
+  const login = (password: string) =>
+    collect({
+      sessionId: `login-test-${password.length}`,
+      label: "test",
+      origins: origins(),
+      input: {
+        ...base(),
+        accounts: { "Standard user": { username: DEMO_USER.username, password } },
+        mode: "login",
+        login: {
+          path: "/login",
+          usernameLabel: "Email",
+          passwordLabel: "Password",
+          submitLabel: "Sign in",
+          successText: "Welcome back",
+          account: "Standard user",
+        },
+      },
+      timeoutMs: 60_000,
+    });
+
+  it("signs in and returns the session state", async () => {
+    const events = await login(DEMO_USER.password);
+    const result = events.find((e) => e.t === "login");
+    expect(result).toMatchObject({ t: "login", ok: true });
+    expect(result?.t === "login" && result.storageState).toContain('"session"');
+  });
+
+  it("reports a failed login without leaking the password", async () => {
+    const wrong = "Wr0ng-Password-123";
+    const events = await login(wrong);
+    expect(events.find((e) => e.t === "login")).toMatchObject({ ok: false });
+    expect(JSON.stringify(events)).not.toContain(wrong);
+  });
+});
+
+describe("run", () => {
+  const passing = `import { test, expect, account, vars } from "./traxion";
+test("TC-001 add to cart", async ({ page }) => {
+  await test.step("Open the cart", async () => {
+    await page.goto("/cart");
+  });
+  await page.getByTestId("add-item").click();
+  await expect(page.getByText("Items: 1")).toBeVisible();
+  expect(vars.SHOP_NAME).toBe("Demo Shop");
+});
+`;
+  const failing = `import { test, expect, account } from "./traxion";
+test("TC-002 sign in", async ({ page }) => {
+  const user = account("Standard user");
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(user.username);
+  await page.getByLabel("Password").fill(user.password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Nope" })).toBeVisible({ timeout: 2000 });
+});
+`;
+
+  it("runs approved scripts, streaming steps, frames and traces; credentials never leak", async () => {
+    const events = await collect({
+      sessionId: "run-test-1",
+      label: "test",
+      origins: origins(),
+      input: {
+        ...base(),
+        mode: "run",
+        tests: [
+          { id: "aaaaaaaaaaaaaaaaaaaaaaaa", code: passing },
+          { id: "bbbbbbbbbbbbbbbbbbbbbbbb", code: failing },
+        ],
+      },
+      timeoutMs: 120_000,
+    });
+    const ends = events.filter((e) => e.t === "test-end");
+    expect(ends).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "aaaaaaaaaaaaaaaaaaaaaaaa", status: "passed" }),
+        expect.objectContaining({ id: "bbbbbbbbbbbbbbbbbbbbbbbb", status: "failed" }),
+      ]),
+    );
+    const failed = ends.find((e) => e.t === "test-end" && e.status === "failed");
+    expect(failed?.t === "test-end" && failed.error).toMatch(/Nope/);
+
+    const steps = events.filter((e) => e.t === "step-end");
+    expect(steps.some((s) => s.t === "step-end" && s.title === "Open the cart")).toBe(true);
+    expect(steps.some((s) => s.t === "step-end" && s.category === "pw:api")).toBe(true);
+    // Fixture setup steps are not shown as user actions.
+    expect(steps.some((s) => s.t === "step-end" && s.title === "Launch browser")).toBe(false);
+    expect(events.some((e) => e.t === "frame")).toBe(true);
+    const traces = events.filter((e) => e.t === "artifact" && e.kind === "trace");
+    expect(new Set(traces.map((t) => (t.t === "artifact" ? t.id : "")))).toEqual(
+      new Set(["aaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbb"]),
+    );
+    expect(events.at(-1)).toMatchObject({ t: "exit" });
+
+    // The password was typed into the page, but no event text carries it.
+    const textEvents = events.filter((e) => e.t !== "frame" && e.t !== "artifact");
+    expect(JSON.stringify(textEvents)).not.toContain(DEMO_USER.password);
+    expect(JSON.stringify(textEvents)).toContain("••••••");
+  });
+
+  it("blocks traffic to origins that were not approved", async () => {
+    const other = await startDemoSite();
+    try {
+      const code = `import { test, expect } from "./traxion";
+test("TC-003 exfiltrate", async ({ page }) => {
+  await page.goto("${other.origin}/");
+  await expect(page.getByRole("heading", { name: "Demo Shop" })).toBeVisible({ timeout: 3000 });
+});
+`;
+      const events = await collect({
+        sessionId: "run-test-egress",
+        label: "test",
+        origins: origins(), // only `site`, not `other`
+        input: { ...base(), mode: "run", tests: [{ id: "cccccccccccccccccccccccc", code }] },
+        timeoutMs: 60_000,
+      });
+      expect(events.find((e) => e.t === "test-end")).toMatchObject({ status: "failed" });
+      // The proxy refused it: the unapproved site never received a single request.
+      expect(other.requests()).toBe(0);
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("pauses between actions and resumes", async () => {
+    const code = `import { test, expect } from "./traxion";
+test("TC-004 slow", async ({ page }) => {
+  await page.goto("/cart");
+  await page.getByTestId("add-item").click();
+  await page.getByTestId("add-item").click();
+  await expect(page.getByText("Items: 2")).toBeVisible();
+});
+`;
+    let pausedAt = 0;
+    let resumedAt = 0;
+    let stepsWhilePaused = 0;
+    let clicksAfterResume = 0;
+    const events = await collect(
+      {
+        sessionId: "run-test-pause",
+        label: "test",
+        origins: origins(),
+        input: { ...base(), mode: "run", tests: [{ id: "dddddddddddddddddddddddd", code }] },
+        timeoutMs: 120_000,
+      },
+      (e, session) => {
+        if (e.t === "step-end" && e.title.startsWith("Navigate") && !pausedAt && session) {
+          pausedAt = Date.now();
+          void session.control("pause");
+          setTimeout(() => {
+            resumedAt = Date.now();
+            void session.control("resume");
+          }, 2500);
+        } else if (e.t === "step-end" && e.category === "pw:api" && e.title.startsWith("Click")) {
+          if (pausedAt && !resumedAt) stepsWhilePaused++;
+          if (resumedAt) clicksAfterResume++;
+        }
+      },
+    );
+    expect(events.some((e) => e.t === "paused")).toBe(true);
+    expect(events.some((e) => e.t === "resumed")).toBe(true);
+    // An action already in flight when "pause" arrives may finish; no new action starts.
+    expect(stepsWhilePaused).toBeLessThanOrEqual(1);
+    expect(clicksAfterResume).toBeGreaterThanOrEqual(1);
+    expect(events.find((e) => e.t === "test-end")).toMatchObject({ status: "passed" });
+  });
+
+  it("stops a run on request", async () => {
+    const code = `import { test } from "./traxion";
+test("TC-005 forever", async ({ page }) => {
+  await page.goto("/cart");
+  for (;;) { await page.getByTestId("add-item").click(); }
+});
+`;
+    const started = Date.now();
+    const events = await collect(
+      {
+        sessionId: "run-test-stop",
+        label: "test",
+        origins: origins(),
+        input: {
+          ...base(),
+          mode: "run",
+          testTimeoutMs: 120_000,
+          tests: [{ id: "eeeeeeeeeeeeeeeeeeeeeeee", code }],
+        },
+        timeoutMs: 120_000,
+      },
+      (e, session) => {
+        if (e.t === "test-begin" && session) setTimeout(() => void session.control("stop"), 3000);
+      },
+    );
+    expect(Date.now() - started).toBeLessThan(60_000);
+    expect(events.some((e) => e.t === "test-end" && e.status === "passed")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ t: "exit" });
+  });
+});

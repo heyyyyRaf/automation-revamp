@@ -23,6 +23,17 @@ export class FakeProvider implements AIProvider {
         return { raw: fakeAnalysis(text), usage, model: "fake" };
       case "test_case_generation":
         return { raw: fakeTestCases(text), usage, model: "fake" };
+      case "image_description":
+        return {
+          raw: { description: "Screen with a form: fields Name and Email, and a Submit button." },
+          usage,
+          model: "fake",
+        };
+      case "test_case_rewrite":
+        return { raw: fakeRewrite(text), usage, model: "fake" };
+      case "script_generation":
+      case "script_fix":
+        return { raw: fakeScript(text, request.schemaName === "script_fix"), usage, model: "fake" };
       default:
         return { raw: {}, usage, model: "fake" };
     }
@@ -54,7 +65,9 @@ function fakeAnalysis(text: string) {
     .map(({ source, line }, i) => ({
       ref: `R${i + 1}`,
       text: line.replace(/^[-*•]\s*/, "").slice(0, 2000),
-      type: /\b(secure|password|encrypt|lock)/i.test(line) ? "SECURITY" : "FUNCTIONAL",
+      type: /\b(must not|invalid|reject|lock|at least|at most)/i.test(line)
+        ? "VALIDATION"
+        : "FEATURE",
       source,
       section: null,
     }));
@@ -77,39 +90,85 @@ function fakeAnalysis(text: string) {
   };
 }
 
-function fakeTestCases(text: string) {
-  const keys = [...new Set([...text.matchAll(/\bREQ-\d{3,}\b/g)].map((m) => m[0]))];
+function fakeCase(key: string, kind: "valid" | "invalid") {
+  const valid = kind === "valid";
   return {
-    testCases: keys.flatMap((key) => [
-      {
-        title: `${key}: works with valid input`,
-        preconditions: "User is signed in.",
-        steps: [
+    title: valid ? `${key}: works with valid input` : `${key}: rejects invalid input`,
+    preconditions: valid ? "User is signed in." : "None",
+    steps: valid
+      ? [
           { action: "Open the relevant page.", expected: null },
           { action: "Perform the action with valid data.", expected: "The action succeeds." },
+        ]
+      : [{ action: "Perform the action with invalid data.", expected: "An error is shown." }],
+    testData: valid
+      ? [{ name: "user", value: "{{STANDARD_USER}}" }]
+      : [{ name: "none", value: "not needed" }],
+    expectedResult: valid
+      ? "The system behaves as the requirement describes."
+      : "The system rejects the input with a clear message.",
+    type: valid ? "POSITIVE" : "NEGATIVE",
+    priority: valid ? "HIGH" : "MEDIUM",
+    requirementKeys: [key],
+    automatable: true,
+    automatableReason: valid ? "Deterministic UI steps." : "Error message can be asserted.",
+    tags: valid ? ["smoke"] : ["validation"],
+  };
+}
+
+function fakeTestCases(text: string) {
+  const keys = [...new Set([...text.matchAll(/\bREQ-\d{3,}\b/g)].map((m) => m[0]))];
+  const existing = /source="existing scenarios">>>\n- ([^\n]+)/.exec(text)?.[1]?.trim();
+  return {
+    scenarios: existing
+      ? []
+      : [
+          {
+            ref: "S1",
+            title: "Main flow",
+            description: "The main journey through the requirements.",
+            flowSteps: ["Open the app", "Complete the form", "Submit"],
+          },
         ],
-        testData: [{ name: "user", value: "{{STANDARD_USER}}" }],
-        expectedResult: "The system behaves as the requirement describes.",
-        type: "POSITIVE",
-        priority: "HIGH",
-        requirementKeys: [key],
-        automatable: true,
-        automatableReason: "Deterministic UI steps.",
-      },
-      {
-        title: `${key}: rejects invalid input`,
-        preconditions: null,
-        steps: [
-          { action: "Perform the action with invalid data.", expected: "An error is shown." },
-        ],
-        testData: [],
-        expectedResult: "The system rejects the input with a clear message.",
-        type: "NEGATIVE",
-        priority: "MEDIUM",
-        requirementKeys: [key],
-        automatable: true,
-        automatableReason: "Error message can be asserted.",
-      },
-    ]),
+    testCases: keys.flatMap((key) =>
+      (["valid", "invalid"] as const).map((kind) => ({
+        ...fakeCase(key, kind),
+        scenarioRef: existing ? `EXISTING:${existing}` : "S1",
+      })),
+    ),
+  };
+}
+
+function fakeRewrite(text: string) {
+  const key = /\bREQ-\d{3,}\b/.exec(text)?.[0] ?? "REQ-001";
+  const instruction = /source="tester instruction">>>\n([^\n]+)/.exec(text)?.[1]?.trim() ?? "";
+  const tc = fakeCase(key, "valid");
+  return { testCase: { ...tc, title: `${tc.title} (rewritten: ${instruction.slice(0, 60)})` } };
+}
+
+/** A minimal, valid script that opens the start page and checks it loaded. */
+function fakeScript(text: string, fix: boolean) {
+  const title = /source="test case">>>\n([^\n]+)/.exec(text)?.[1]?.trim() ?? "TC generated test";
+  const start = /The test starts at path: (\S+)/.exec(text)?.[1] ?? "/";
+  const existing = /source="current script">>>\n([\s\S]*?)\n<<<END/.exec(text)?.[1];
+  const code =
+    fix && existing
+      ? `${existing.trimEnd()}\n// Reviewed by AI fix.\n`
+      : [
+          'import { test, expect } from "./traxion";',
+          "",
+          `test(${JSON.stringify(title)}, async ({ page }) => {`,
+          '  await test.step("Open the start page", async () => {',
+          `    await page.goto(${JSON.stringify(start)});`,
+          "  });",
+          '  await expect(page.locator("body")).toBeVisible();',
+          "});",
+          "",
+        ].join("\n");
+  return {
+    code,
+    notes: fix
+      ? "Kept the script and marked it as reviewed."
+      : "Opens the start page and checks it loads.",
   };
 }

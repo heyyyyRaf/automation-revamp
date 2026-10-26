@@ -62,16 +62,16 @@ export function UsersManager({
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {message && <Alert tone={message.tone}>{message.text}</Alert>}
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-line-soft divide-y">
           {users.map((u) => {
             const self = u.id === currentUserId;
             return (
               <li key={u.id} className="flex flex-wrap items-center gap-3 py-3">
                 <div className="min-w-48 flex-1">
                   <p className="font-medium">
-                    {u.name} {self && <span className="text-sm text-slate-500">(you)</span>}
+                    {u.name} {self && <span className="text-muted text-sm">(you)</span>}
                   </p>
-                  <p className="text-sm text-slate-500">
+                  <p className="text-muted text-sm">
                     {u.email} ·{" "}
                     {u.lastLoginAt
                       ? `last sign-in ${formatDate(u.lastLoginAt)}`

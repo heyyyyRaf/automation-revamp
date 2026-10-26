@@ -5,6 +5,7 @@ import { exportHandler } from "@/server/jobs/processors/export";
 import { extractTextHandler } from "@/server/jobs/processors/extract-text";
 import { generateTestCasesHandler } from "@/server/jobs/processors/generate-test-cases";
 import { importFigmaHandler } from "@/server/jobs/processors/import-figma";
+import { rewriteTestCaseHandler } from "@/server/jobs/processors/rewrite-test-case";
 import type { JobHandler } from "@/server/jobs/runner";
 
 export const JOB_HANDLERS: Partial<Record<JobType, JobHandler>> = {
@@ -12,6 +13,7 @@ export const JOB_HANDLERS: Partial<Record<JobType, JobHandler>> = {
   IMPORT_FIGMA: importFigmaHandler,
   ANALYZE_REQUIREMENTS: analyzeRequirementsHandler,
   GENERATE_TEST_CASES: generateTestCasesHandler,
+  REWRITE_TEST_CASE: rewriteTestCaseHandler,
   EXPORT: exportHandler,
 };
 

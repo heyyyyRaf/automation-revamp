@@ -123,6 +123,7 @@ describe("OpenAI provider", () => {
   const schema = z.object({ answer: z.string() });
   const request: StructuredRequest<{ answer: string }> = {
     purpose: "ANALYZE_REQUIREMENTS",
+    promptVersion: "test@1",
     system: "SYSTEM PROMPT",
     content: [
       { type: "text", text: "hello" },

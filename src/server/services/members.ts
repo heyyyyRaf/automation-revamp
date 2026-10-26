@@ -1,5 +1,5 @@
 import type { AuthContext } from "@/server/auth/session";
-import { isValidId, requireProjectAccess } from "@/server/authz/guards";
+import { isValidId, requireOwnerOrAdmin, requireProjectAccess } from "@/server/authz/guards";
 import { db } from "@/server/db";
 import { badRequest, conflict, notFound } from "@/server/errors";
 import { audit } from "@/server/services/audit";
@@ -21,8 +21,15 @@ export async function listMembers(auth: AuthContext, projectId: string) {
   return rows.map((m) => ({ id: m.id, addedAt: m.createdAt, user: m.user }));
 }
 
+/** Owner or Admin (FR-1.1). Members must be active; a project's owner can't be removed. */
+async function requireMemberManager(auth: AuthContext, projectId: string) {
+  const project = await requireProjectAccess(auth, projectId, "projects:edit");
+  requireOwnerOrAdmin(auth, project);
+  return project;
+}
+
 export async function addMember(auth: AuthContext, projectId: string, userId: string, meta: Meta) {
-  await requireProjectAccess(auth, projectId, "projects:manage-members");
+  await requireMemberManager(auth, projectId);
   const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) throw notFound("User");
   if (!user.isActive) throw badRequest("This user is deactivated.");
@@ -57,8 +64,11 @@ export async function removeMember(
   userId: string,
   meta: Meta,
 ) {
-  await requireProjectAccess(auth, projectId, "projects:manage-members");
+  const project = await requireMemberManager(auth, projectId);
   if (!isValidId(userId)) throw notFound("Member");
+  if (userId === project.ownerId) {
+    throw conflict("This user owns the project. Make someone else the owner first.");
+  }
   await db.$transaction(async (tx) => {
     const { count } = await tx.projectMember.deleteMany({ where: { projectId, userId } });
     if (count === 0) throw notFound("Member");

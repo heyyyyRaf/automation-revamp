@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Document, DocumentCategory, Prisma } from "@/generated/prisma/client";
+import type { DocumentTagName } from "@/lib/domain";
 import type { DocumentCategoryName } from "@/lib/validation";
 import type { AuthContext } from "@/server/auth/session";
 import { isValidId, requireProjectAccess } from "@/server/authz/guards";
@@ -8,10 +9,16 @@ import { getEnv } from "@/server/env";
 import { badRequest, conflict, notFound, payloadTooLarge } from "@/server/errors";
 import { enqueueJob } from "@/server/jobs/enqueue";
 import { logger } from "@/server/logger";
-import { audit } from "@/server/services/audit";
+import { audit, changes } from "@/server/services/audit";
 import { getStorage, newObjectKey } from "@/server/storage/storage";
 import { sanitizeDisplayName } from "@/server/uploads/filename";
-import { EXTRACTABLE_KINDS, validateUpload } from "@/server/uploads/validate";
+import {
+  ALLOWED_KINDS,
+  allowedExtensionsLabel,
+  EXTRACTABLE_KINDS,
+  kindFromMime,
+  validateUpload,
+} from "@/server/uploads/validate";
 
 interface Meta {
   ip: string;
@@ -22,6 +29,7 @@ interface Meta {
 export const DOCUMENT_LIST_SELECT = {
   id: true,
   category: true,
+  typeTag: true,
   source: true,
   originalName: true,
   mimeType: true,
@@ -38,6 +46,22 @@ export const DOCUMENT_LIST_SELECT = {
 
 export type DocumentListItem = Prisma.DocumentGetPayload<{ select: typeof DOCUMENT_LIST_SELECT }>;
 
+/** The upload group a tag belongs to (OTHER stays in whatever group it was added to). */
+const TAG_CATEGORY: Record<DocumentTagName, DocumentCategoryName | null> = {
+  FRD: "REQUIREMENTS",
+  USER_STORY: "REQUIREMENTS",
+  FLOW_DIAGRAM: "SYSTEM_FLOW",
+  FIGMA: "FIGMA",
+  OTHER: null,
+};
+
+/** FR-2.3: a file's type tag defaults from the group it was dropped into. */
+export function defaultTag(category: DocumentCategoryName, fileName: string): DocumentTagName {
+  if (category === "SYSTEM_FLOW") return "FLOW_DIAGRAM";
+  if (category === "FIGMA") return "FIGMA";
+  return /stor(y|ies)\b/i.test(fileName) ? "USER_STORY" : "FRD";
+}
+
 export function maxUploadBytes(): number {
   return getEnv().MAX_UPLOAD_MB * 1024 * 1024;
 }
@@ -45,7 +69,7 @@ export function maxUploadBytes(): number {
 export async function uploadDocument(
   auth: AuthContext,
   projectId: string,
-  input: { category: DocumentCategoryName; file: File },
+  input: { category: DocumentCategoryName; file: File; typeTag?: DocumentTagName | undefined },
   meta: Meta,
 ): Promise<DocumentListItem> {
   await requireProjectAccess(auth, projectId, "documents:write");
@@ -67,7 +91,10 @@ export async function uploadDocument(
   const sha256 = createHash("sha256").update(file.bytes).digest("hex");
   await getStorage().put(storageKey, file.bytes, file.mimeType);
 
-  const extractable = EXTRACTABLE_KINDS.has(file.kind);
+  // Images are described by the AI vision model during extraction (FR-2.2).
+  const extractable =
+    EXTRACTABLE_KINDS.has(file.kind) || file.kind === "png" || file.kind === "jpg";
+  const typeTag = input.typeTag ?? defaultTag(input.category, originalName);
   let doc: Document;
   try {
     doc = await db.$transaction(async (tx) => {
@@ -75,6 +102,7 @@ export async function uploadDocument(
         data: {
           projectId,
           category: input.category as DocumentCategory,
+          typeTag,
           source: "FILE",
           originalName,
           mimeType: file.mimeType,
@@ -92,7 +120,12 @@ export async function uploadDocument(
           entityId: created.id,
           projectId,
           actorId: auth.user.id,
-          metadata: { name: originalName, category: input.category, size: file.bytes.length },
+          metadata: {
+            name: originalName,
+            category: input.category,
+            typeTag,
+            size: file.bytes.length,
+          },
           ipAddress: meta.ip,
           requestId: meta.requestId,
         },
@@ -131,6 +164,7 @@ export async function addFigmaLink(
       data: {
         projectId,
         category: "FIGMA",
+        typeTag: "FIGMA",
         source: "LINK",
         originalName: sanitizeDisplayName(input.name || "Figma design"),
         linkUrl: input.url,
@@ -188,6 +222,53 @@ export async function getDocumentFile(auth: AuthContext, projectId: string, docu
   if (!doc.storageKey || !doc.mimeType) throw badRequest("This item is a link, not a file.");
   const bytes = await getStorage().get(doc.storageKey);
   return { bytes, mimeType: doc.mimeType, name: doc.originalName };
+}
+
+/**
+ * Re-tags a file that landed in the wrong group ("Change a tag if a file landed in the wrong
+ * group"). The file moves to the tag's group, which must accept its file type.
+ */
+export async function updateDocumentTag(
+  auth: AuthContext,
+  projectId: string,
+  documentId: string,
+  typeTag: DocumentTagName,
+  meta: Meta,
+): Promise<DocumentListItem> {
+  await requireProjectAccess(auth, projectId, "documents:write");
+  const doc = await findDoc(projectId, documentId);
+  if (doc.typeTag === typeTag) return getListItem(projectId, doc.id);
+  if (doc.source === "LINK") throw badRequest("A Figma link is always tagged as a Figma design.");
+
+  const category = TAG_CATEGORY[typeTag] ?? (doc.category as DocumentCategoryName);
+  const kind = doc.mimeType ? kindFromMime(doc.mimeType) : undefined;
+  if (!kind || !ALLOWED_KINDS[category].includes(kind)) {
+    throw badRequest(
+      `A ${kind ? kind.toUpperCase() : "file of this type"} can't be tagged like that. That group takes ${allowedExtensionsLabel(category)}.`,
+    );
+  }
+  await db.$transaction(async (tx) => {
+    const updated = await tx.document.update({
+      where: { id: doc.id },
+      data: { typeTag, category: category as DocumentCategory },
+    });
+    const diff = changes(doc, updated, ["typeTag", "category"]);
+    await audit(
+      {
+        action: "document.update",
+        entityType: "document",
+        entityId: doc.id,
+        projectId,
+        actorId: auth.user.id,
+        metadata: { name: doc.originalName },
+        ...(diff ?? {}),
+        ipAddress: meta.ip,
+        requestId: meta.requestId,
+      },
+      tx,
+    );
+  });
+  return getListItem(projectId, doc.id);
 }
 
 export async function deleteDocument(

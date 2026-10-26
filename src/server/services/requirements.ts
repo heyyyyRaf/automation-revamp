@@ -6,13 +6,15 @@ import type {
   questionCreateSchema,
   questionUpdateSchema,
   requirementCreateSchema,
+  requirementMergeSchema,
   requirementUpdateSchema,
 } from "@/lib/validation";
+import { APPROVED_LIKE } from "@/lib/domain";
 import type { AuthContext } from "@/server/auth/session";
 import { isValidId, requireProjectAccess } from "@/server/authz/guards";
 import { db } from "@/server/db";
 import { badRequest, notFound } from "@/server/errors";
-import { audit, type AuditAction } from "@/server/services/audit";
+import { audit, changes, type AuditAction } from "@/server/services/audit";
 import { allocateKeys } from "@/server/services/keys";
 
 interface Meta {
@@ -26,6 +28,7 @@ function auditFor(auth: AuthContext, projectId: string, meta: Meta) {
     entityType: string,
     entityId: string,
     metadata?: Prisma.InputJsonObject,
+    diff?: { before: Prisma.InputJsonObject; after: Prisma.InputJsonObject } | null,
   ) =>
     audit({
       action,
@@ -34,6 +37,7 @@ function auditFor(auth: AuthContext, projectId: string, meta: Meta) {
       projectId,
       actorId: auth.user.id,
       ...(metadata ? { metadata } : {}),
+      ...(diff ?? {}),
       ipAddress: meta.ip,
       requestId: meta.requestId,
     });
@@ -47,7 +51,8 @@ export async function listRequirements(auth: AuthContext, projectId: string) {
     where: { projectId, deletedAt: null },
     orderBy: { key: "asc" },
     include: {
-      sourceDocument: { select: { id: true, originalName: true } },
+      sourceDocument: { select: { id: true, originalName: true, typeTag: true } },
+      updatedBy: { select: { id: true, name: true } },
       testCases: {
         where: { testCase: { deletedAt: null } },
         select: { testCase: { select: { status: true } } },
@@ -59,11 +64,15 @@ export async function listRequirements(auth: AuthContext, projectId: string) {
     key: r.key,
     text: r.text,
     type: r.type,
+    status: r.status,
     origin: r.origin,
     sourceSection: r.sourceSection,
     sourceDocument: r.sourceDocument,
-    testCaseCount: testCases.length,
-    approvedTestCaseCount: testCases.filter((t) => t.testCase.status === "APPROVED").length,
+    testCaseCount: testCases.filter((t) => t.testCase.status !== "REJECTED").length,
+    approvedTestCaseCount: testCases.filter((t) =>
+      (APPROVED_LIKE as readonly string[]).includes(t.testCase.status),
+    ).length,
+    updatedBy: r.updatedBy,
     updatedAt: r.updatedAt,
   }));
 }
@@ -85,12 +94,17 @@ export async function createRequirement(
         type: input.type,
         sourceSection: input.sourceSection ?? null,
         origin: "MANUAL",
+        updatedById: auth.user.id,
       },
     });
   });
-  await auditFor(auth, projectId, meta)("requirement.create", "requirement", req.id, {
-    key: req.key,
-  });
+  await auditFor(auth, projectId, meta)(
+    "requirement.create",
+    "requirement",
+    req.id,
+    { key: req.key },
+    { before: {}, after: { text: req.text, type: req.type } },
+  );
   return req;
 }
 
@@ -116,12 +130,17 @@ export async function updateRequirement(
       ...(input.text !== undefined ? { text: input.text } : {}),
       ...(input.type !== undefined ? { type: input.type } : {}),
       ...(input.sourceSection !== undefined ? { sourceSection: input.sourceSection } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      updatedById: auth.user.id,
     },
   });
-  await auditFor(auth, projectId, meta)("requirement.update", "requirement", req.id, {
-    key: req.key,
-    fields: Object.keys(input),
-  });
+  await auditFor(auth, projectId, meta)(
+    "requirement.update",
+    "requirement",
+    req.id,
+    { key: req.key, fields: Object.keys(input) },
+    changes(existing, req, ["text", "type", "sourceSection", "status"]),
+  );
   return req;
 }
 
@@ -134,10 +153,105 @@ export async function deleteRequirement(
 ) {
   await requireProjectAccess(auth, projectId, "requirements:write");
   const existing = await findRequirement(projectId, id);
-  await db.requirement.update({ where: { id: existing.id }, data: { deletedAt: new Date() } });
-  await auditFor(auth, projectId, meta)("requirement.delete", "requirement", existing.id, {
-    key: existing.key,
+  await db.requirement.update({
+    where: { id: existing.id },
+    data: { deletedAt: new Date(), updatedById: auth.user.id },
   });
+  await auditFor(auth, projectId, meta)(
+    "requirement.delete",
+    "requirement",
+    existing.id,
+    { key: existing.key },
+    { before: { text: existing.text, type: existing.type }, after: {} },
+  );
+}
+
+/**
+ * FR-3.4: merges duplicates into one requirement. The lowest-numbered one survives with the
+ * merged wording; the others are marked MERGED (pointing at it) and leave the list. Their
+ * test case links and open questions move to the survivor, so traceability is kept.
+ */
+export async function mergeRequirements(
+  auth: AuthContext,
+  projectId: string,
+  input: z.infer<typeof requirementMergeSchema>,
+  meta: Meta,
+) {
+  await requireProjectAccess(auth, projectId, "requirements:write");
+  const ids = [...new Set(input.requirementIds)];
+  if (ids.length < 2) throw badRequest("Choose at least two different requirements.");
+  const reqs = await db.requirement.findMany({
+    where: { id: { in: ids }, projectId, deletedAt: null },
+    orderBy: { key: "asc" },
+  });
+  if (reqs.length !== ids.length) throw notFound("Requirement");
+  const [survivor, ...others] = reqs;
+  if (!survivor) throw notFound("Requirement");
+  const otherIds = others.map((r) => r.id);
+
+  const merged = await db.$transaction(async (tx) => {
+    const links = await tx.testCaseRequirement.findMany({
+      where: { requirementId: { in: otherIds } },
+      select: { testCaseId: true },
+    });
+    if (links.length > 0) {
+      await tx.testCaseRequirement.createMany({
+        data: links.map((l) => ({ testCaseId: l.testCaseId, requirementId: survivor.id })),
+        skipDuplicates: true,
+      });
+      await tx.testCaseRequirement.deleteMany({ where: { requirementId: { in: otherIds } } });
+    }
+    await tx.openQuestion.updateMany({
+      where: { projectId, requirementId: { in: otherIds } },
+      data: { requirementId: survivor.id },
+    });
+    await tx.requirement.updateMany({
+      where: { id: { in: otherIds } },
+      data: {
+        status: "MERGED",
+        mergedIntoId: survivor.id,
+        deletedAt: new Date(),
+        updatedById: auth.user.id,
+      },
+    });
+    const updated = await tx.requirement.update({
+      where: { id: survivor.id },
+      data: { text: input.text, type: input.type, updatedById: auth.user.id },
+    });
+    await audit(
+      {
+        action: "requirement.merge",
+        entityType: "requirement",
+        entityId: survivor.id,
+        projectId,
+        actorId: auth.user.id,
+        metadata: { into: survivor.key, merged: others.map((r) => r.key) },
+        before: {
+          requirements: reqs.map((r) => ({ key: r.key, text: r.text, type: r.type })),
+        },
+        after: { key: updated.key, text: updated.text, type: updated.type },
+        ipAddress: meta.ip,
+        requestId: meta.requestId,
+      },
+      tx,
+    );
+    return updated;
+  });
+  return merged;
+}
+
+/** A requirement flagged by an open question goes back to Active once none are open. */
+async function settleReviewStatus(projectId: string, requirementId: string | null) {
+  if (!requirementId) return;
+  const open = await db.openQuestion.count({
+    where: { projectId, requirementId, status: "OPEN" },
+  });
+  if (open === 0) {
+    await db.requirement.updateMany({
+      where: { id: requirementId, projectId, status: "NEEDS_REVIEW" },
+      data: { status: "ACTIVE" },
+    });
+  }
 }
 
 // ── User flows ──────────────────────────────────────────────────────────────
@@ -226,7 +340,15 @@ export async function listQuestions(auth: AuthContext, projectId: string) {
       status: true,
       origin: true,
       answeredAt: true,
-      requirement: { select: { id: true, key: true } },
+      // "From FRD section 4.2": where the unclear requirement came from (design: Upload).
+      requirement: {
+        select: {
+          id: true,
+          key: true,
+          sourceSection: true,
+          sourceDocument: { select: { originalName: true } },
+        },
+      },
       answeredBy: { select: { name: true } },
     },
   });
@@ -276,6 +398,7 @@ export async function updateQuestion(
         }
       : { status: input.status ?? existing.status };
   const q = await db.openQuestion.update({ where: { id: existing.id }, data });
+  await settleReviewStatus(projectId, q.requirementId);
   await auditFor(auth, projectId, meta)(
     input.answer !== undefined ? "question.answer" : "question.update",
     "open_question",

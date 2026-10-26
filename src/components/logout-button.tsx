@@ -20,9 +20,16 @@ export function LogoutButton() {
     router.refresh();
   }
   return (
-    <Button variant="ghost" size="sm" onClick={() => void logout()} disabled={pending}>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => void logout()}
+      disabled={pending}
+      aria-label="Sign out"
+      title="Sign out"
+      className="size-11 shrink-0 px-0"
+    >
       <LogOut aria-hidden />
-      Sign out
     </Button>
   );
 }

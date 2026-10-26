@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { getEnv } from "@/server/env";
 import { FigmaClient, parseFigmaLink } from "@/server/figma/figma";
+import { enqueueJob } from "@/server/jobs/enqueue";
 import { JobFailure, type JobHandler } from "@/server/jobs/runner";
 import { getStorage, newObjectKey } from "@/server/storage/storage";
 import { sanitizeDisplayName } from "@/server/uploads/filename";
@@ -71,20 +72,28 @@ export const importFigmaHandler: JobHandler = async ({ job, signal }) => {
     }
     const storageKey = newObjectKey(job.projectId, "documents");
     await getStorage().put(storageKey, file.bytes, file.mimeType);
-    await db.document.create({
+    const frameDoc = await db.document.create({
       data: {
         projectId: job.projectId,
         category: "FIGMA",
+        typeTag: "FIGMA",
         source: "FILE",
         originalName: sanitizeDisplayName(`Figma - ${frame.name}.png`),
         mimeType: file.mimeType,
         sizeBytes: file.bytes.length,
         storageKey,
         sha256: createHash("sha256").update(file.bytes).digest("hex"),
-        extractionStatus: "NOT_APPLICABLE",
+        extractionStatus: "PENDING",
         derivedFromId: linkDoc.id,
         uploadedById: linkDoc.uploadedById,
       },
+    });
+    // Each frame is described by the vision model, like an uploaded image.
+    await enqueueJob({
+      projectId: job.projectId,
+      type: "EXTRACT_TEXT",
+      payload: { documentId: frameDoc.id },
+      createdById: job.createdById ?? undefined,
     });
     imported++;
   }

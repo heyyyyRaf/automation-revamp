@@ -44,6 +44,29 @@ const envSchema = z.object({
 
   /** Server-side only. Personal access token used to export frames from Figma links. */
   FIGMA_ACCESS_TOKEN: z.string().min(1).optional(),
+
+  /**
+   * Keys for encrypting test credentials and saved sessions: "1:<base64 32 bytes>,2:<...>".
+   * The highest version encrypts; older versions still decrypt (key rotation).
+   */
+  CREDENTIALS_ENCRYPTION_KEYS: z.string().min(1).optional(),
+
+  /**
+   * How generated scripts are run. "docker": a fresh hardened container per run via the
+   * launcher service (required in production). "local": an unsandboxed child process —
+   * development and tests only, refused when NODE_ENV=production.
+   */
+  SANDBOX_MODE: z.enum(["docker", "local"]).default("docker"),
+  LAUNCHER_URL: z.url().optional(),
+  LAUNCHER_TOKEN: z.string().min(16).optional(),
+  /** Control API of the egress proxy (grants per-run access to approved origins). */
+  EGRESS_CONTROL_URL: z.url().optional(),
+  EGRESS_CONTROL_TOKEN: z.string().min(16).optional(),
+  /** The proxy address as seen from inside runner containers. */
+  EGRESS_PROXY_URL: z.url().optional(),
+  /** Per-test timeout and whole-run cap, in seconds. */
+  RUN_TEST_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(1800).default(120),
+  RUN_MAX_SECONDS: z.coerce.number().int().min(60).max(14_400).default(1800),
 });
 
 export type Env = z.infer<typeof envSchema>;

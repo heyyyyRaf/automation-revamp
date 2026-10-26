@@ -8,6 +8,7 @@ export const QUEUE_FOR_TYPE: Partial<Record<JobType, string>> = {
   IMPORT_FIGMA: "documents",
   ANALYZE_REQUIREMENTS: "ai",
   GENERATE_TEST_CASES: "ai",
+  REWRITE_TEST_CASE: "ai",
   EXPORT: "exports",
 };
 

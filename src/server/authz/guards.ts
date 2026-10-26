@@ -43,3 +43,19 @@ export async function requireProjectAccess(
 export function isValidId(id: string): boolean {
   return ID_RE.test(id);
 }
+
+/**
+ * Project management (edit, archive, ownership, members): the project owner or an Admin.
+ * Call after requireProjectAccess so non-members still get a 404.
+ */
+export function requireOwnerOrAdmin(auth: AuthContext, project: Pick<Project, "ownerId">): void {
+  if (auth.user.role === "ADMIN") return;
+  if (auth.user.role !== "VIEWER" && project.ownerId === auth.user.id) return;
+  throw forbidden("Only the project owner or an Admin can do this.");
+}
+
+export function canManageProject(auth: AuthContext, project: Pick<Project, "ownerId">): boolean {
+  return (
+    auth.user.role === "ADMIN" || (auth.user.role !== "VIEWER" && project.ownerId === auth.user.id)
+  );
+}

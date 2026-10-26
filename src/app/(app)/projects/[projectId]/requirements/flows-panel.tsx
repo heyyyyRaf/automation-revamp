@@ -41,7 +41,7 @@ export function FlowsPanel({
   }
 
   return (
-    <Card>
+    <Card id="flows">
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
         <div>
           <CardTitle>User flows ({flows.length})</CardTitle>
@@ -56,11 +56,11 @@ export function FlowsPanel({
       <CardContent className="flex flex-col gap-3">
         {error && <Alert tone="error">{error}</Alert>}
         {flows.length === 0 ? (
-          <p className="rounded-lg bg-slate-50 p-4 text-slate-600">No flows yet.</p>
+          <p className="bg-page text-muted rounded-lg p-4">No flows yet.</p>
         ) : (
           <ul className="grid gap-3 md:grid-cols-2">
             {flows.map((f) => (
-              <li key={f.id} className="rounded-lg border border-slate-200 p-4">
+              <li key={f.id} className="border-line rounded-lg border p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-semibold">{f.name}</p>
@@ -87,8 +87,8 @@ export function FlowsPanel({
                     </div>
                   )}
                 </div>
-                {f.description && <p className="mt-1 text-sm text-slate-600">{f.description}</p>}
-                <ol className="mt-2 list-decimal pl-5 text-sm text-slate-800">
+                {f.description && <p className="text-muted mt-1 text-sm">{f.description}</p>}
+                <ol className="text-ink mt-2 list-decimal pl-5 text-sm">
                   {f.steps.map((s, i) => (
                     <li key={i}>{s}</li>
                   ))}

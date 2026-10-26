@@ -48,7 +48,7 @@ beforeEach(async () => {
       projectId: projectA,
       key: "REQ-001",
       text: "Secret requirement of A",
-      type: "FUNCTIONAL",
+      type: "FEATURE",
       origin: "MANUAL",
     },
   });
@@ -219,7 +219,7 @@ describe("role enforcement", () => {
         await call(reqsRoute.POST, "/", {
           session: viewer,
           params: p,
-          json: { text: "New requirement", type: "UI" },
+          json: { text: "New requirement", type: "FIELD" },
         })
       ).status,
     ).toBe(403);

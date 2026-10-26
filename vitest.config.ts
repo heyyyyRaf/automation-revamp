@@ -25,6 +25,20 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          // Real Chromium + runner + egress proxy in local (unsandboxed) mode; no database.
+          name: "sandbox",
+          include: ["tests/sandbox/**/*.test.ts"],
+          environment: "node",
+          globalSetup: ["tests/support/sandbox-global-setup.ts"],
+          setupFiles: ["tests/support/sandbox-setup.ts"],
+          fileParallelism: false,
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts", "tests/security/**/*.test.ts"],
           environment: "node",

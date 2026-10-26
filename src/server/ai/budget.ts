@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import { getEnv } from "@/server/env";
 import { AIError } from "@/server/ai/types";
+import { getAiSettings } from "@/server/services/settings";
 
 export function startOfMonthUtc(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -21,7 +22,11 @@ export async function getAiBudget(projectId: string, now = new Date()): Promise<
     }),
   ]);
   const used = (agg._sum.inputTokens ?? 0) + (agg._sum.outputTokens ?? 0);
-  const cap = project?.monthlyTokenCap ?? getEnv().AI_MONTHLY_TOKEN_CAP;
+  // Project override → the Lead's default (settings) → the environment default.
+  const cap =
+    project?.monthlyTokenCap ??
+    (await getAiSettings()).defaultMonthlyTokenCap ??
+    getEnv().AI_MONTHLY_TOKEN_CAP;
   return { used, cap, remaining: Math.max(0, cap - used) };
 }
 

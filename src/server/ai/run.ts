@@ -5,6 +5,7 @@ import { getAIProvider } from "@/server/ai/provider";
 import { AIError, type StructuredRequest, type TokenUsage } from "@/server/ai/types";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
+import { scrub, secretVariants } from "@/server/sandbox/protocol";
 
 /**
  * The only way the app calls an AI model:
@@ -21,7 +22,21 @@ export async function runStructured<T>(
   const images = request.content.filter((p) => p.type === "image").length;
   await assertWithinBudget(ctx.projectId, estimateTokens(chars, images) + request.maxOutputTokens);
 
-  const provider = getAIProvider();
+  if (request.forbidden?.length) {
+    const variants = secretVariants(request.forbidden);
+    request = {
+      ...request,
+      content: request.content.map((p) => {
+        if (p.type !== "text") return p;
+        const clean = scrub(p.text, variants);
+        if (clean !== p.text)
+          logger.warn({ purpose: request.purpose }, "removed a credential from an AI prompt");
+        return { ...p, text: clean };
+      }),
+    };
+  }
+
+  const provider = await getAIProvider();
   let raw: unknown;
   try {
     const result = await provider.generate(
@@ -67,6 +82,7 @@ async function recordUsage(
         provider,
         model,
         purpose: request.purpose,
+        promptVersion: request.promptVersion,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
       },

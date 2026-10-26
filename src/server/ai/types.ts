@@ -9,6 +9,8 @@ export interface StructuredRequest<T> {
   purpose: JobType;
   /** Trusted instructions written by us. Never contains user content. */
   system: string;
+  /** NFR-10: the versioned template the system prompt came from, e.g. "requirement-analysis@2". */
+  promptVersion: string;
   /** User-side content. Anything user-supplied must be wrapped with `untrusted()`. */
   content: AIContentPart[];
   /** Output is validated against this schema before anything is saved. */
@@ -16,6 +18,11 @@ export interface StructuredRequest<T> {
   schemaName: string;
   maxOutputTokens: number;
   signal?: AbortSignal | undefined;
+  /**
+   * Values that must never reach the provider (test credentials). Any occurrence in the
+   * content is masked before sending — a last line of defence; callers never add them.
+   */
+  forbidden?: string[] | undefined;
 }
 
 export interface TokenUsage {

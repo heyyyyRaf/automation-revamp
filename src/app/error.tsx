@@ -16,12 +16,12 @@ export default function ErrorPage({
 }) {
   return (
     <main className="mx-auto flex max-w-lg flex-col items-center gap-4 px-6 py-24 text-center">
-      <h1 className="text-2xl font-semibold">Something went wrong</h1>
-      <p className="text-slate-600">
+      <h1 className="text-[28px] font-bold">Something went wrong</h1>
+      <p className="text-muted">
         This page couldn&apos;t load. Your saved work is safe. Try again, or go back to your
         projects.
       </p>
-      {error.digest && <p className="text-sm text-slate-500">Reference: {error.digest}</p>}
+      {error.digest && <p className="text-muted text-sm">Reference: {error.digest}</p>}
       <div className="flex gap-3">
         <Button onClick={reset}>Try again</Button>
         <Button variant="secondary" asChild>
