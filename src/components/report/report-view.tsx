@@ -250,7 +250,7 @@ export function CoverageCard({ coverage }: { coverage: CoverageData }) {
   const pct = coverage.total ? Math.round((coverage.covered / coverage.total) * 100) : 0;
   const rows = all ? coverage.rows : coverage.rows.slice(0, COVERAGE_SHOWN);
   return (
-    <section className="flex flex-[1_1_320px] flex-col gap-3.5">
+    <section className="flex min-w-0 flex-[1_1_320px] flex-col gap-3.5">
       <h2 className="m-0 text-[19px] font-bold">Requirement coverage</h2>
       <div className="rounded-card border-line flex flex-col gap-3.5 border bg-white p-5">
         <div className="flex items-baseline justify-between">

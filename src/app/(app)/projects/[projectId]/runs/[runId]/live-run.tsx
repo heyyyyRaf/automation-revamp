@@ -203,10 +203,13 @@ export function LiveRun({
 
   async function control(action: "pause" | "resume" | "stop" | "slow" | "normal") {
     setError(null);
+    // The Slow motion box reacts at once; it flips back if the run refuses the change.
+    const wasSlow = slow;
+    if (action === "slow" || action === "normal") setSlow(action === "slow");
     try {
       await api(`${base}/control`, { json: { action } });
-      if (action === "slow" || action === "normal") setSlow(action === "slow");
     } catch (err) {
+      if (action === "slow" || action === "normal") setSlow(wasSlow);
       setError(err instanceof ApiError ? err.message : "That didn't work.");
     }
   }
@@ -414,7 +417,7 @@ export function LiveRun({
                   {t.title}
                 </span>
                 <span className="text-muted font-mono text-[11px]">
-                  {t.key} ·{" "}
+                  <span className="whitespace-nowrap">{t.key}</span> ·{" "}
                   {t.status === "RUNNING"
                     ? "running"
                     : t.status === "PENDING"
@@ -445,7 +448,7 @@ export function LiveRun({
               </div>
               {selected && <span className="text-muted text-xs font-semibold">{selected.key}</span>}
             </div>
-            <div className="flex items-center gap-2.5 overflow-x-auto bg-[#1E2332] px-4 py-2.5 font-mono text-[12.5px] whitespace-nowrap text-[#E6E9F2]">
+            <div className="relative flex items-center gap-2.5 overflow-x-auto bg-[#1E2332] px-4 py-2.5 font-mono text-[12.5px] whitespace-nowrap text-[#E6E9F2]">
               <span className="font-semibold text-[#8CC8FF]">{verb || " "}</span>
               <span>{target}</span>
             </div>
@@ -461,7 +464,9 @@ export function LiveRun({
                 <p className="text-muted text-sm">
                   {selected?.status === "PENDING"
                     ? "This test hasn't started yet."
-                    : "No picture yet."}
+                    : selected?.status === "RUNNING"
+                      ? "Waiting for the first picture…"
+                      : "Click a step below to see the page at that moment."}
                 </p>
               )}
             </div>

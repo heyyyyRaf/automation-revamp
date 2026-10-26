@@ -1,11 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PlusIcon } from "@/components/icons";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Field, Input, Select, Textarea } from "@/components/ui/form";
+import {
+  Field,
+  FieldError,
+  Input,
+  Select,
+  Textarea,
+  scrollToFirstError,
+} from "@/components/ui/form";
 import { api, ApiError } from "@/lib/api-client";
 import {
   PRIORITIES,
@@ -28,6 +35,21 @@ interface Step {
 }
 
 const NEW_SCENARIO = "__new__";
+
+/** Names shown in "Please check: …" after a refused save. */
+const FIELD_LABELS: Record<string, string> = {
+  title: "Title",
+  scenarioId: "Scenario",
+  requirementIds: "Covers requirements",
+  preconditions: "Preconditions",
+  steps: "Steps",
+  expectedResult: "Expected result",
+  testData: "Test data",
+  type: "Type",
+  priority: "Priority",
+  automatableReason: "Why it can be automated",
+  tags: "Tags",
+};
 const cap = (s: string) => s.charAt(0) + s.slice(1).toLowerCase();
 
 /**
@@ -74,6 +96,11 @@ export function TestCaseDialog({
   );
   const [error, setError] = useState<ApiError | null>(null);
   const [pending, setPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // Once a refused save's errors are on screen, bring the first one into view.
+  useEffect(() => {
+    if (error && Object.keys(error.fieldErrors).length > 0) scrollToFirstError(formRef.current);
+  }, [error]);
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -130,10 +157,13 @@ export function TestCaseDialog({
   }
 
   const fe = (k: string) => error?.fieldErrors[k]?.[0];
+  const badFields = Object.keys(error?.fieldErrors ?? {})
+    .filter((k) => fe(k))
+    .map((k) => FIELD_LABELS[k] ?? k);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent wide title={testCase ? `Edit ${testCase.key}` : "Add a test case"}>
-        <form onSubmit={save} className="flex flex-col gap-4">
+        <form ref={formRef} onSubmit={save} className="flex flex-col gap-4">
           {error && Object.keys(error.fieldErrors).length === 0 && (
             <Alert tone="error">{error.message}</Alert>
           )}
@@ -185,9 +215,7 @@ export function TestCaseDialog({
 
           <fieldset className="flex flex-col gap-2">
             <legend className="text-ink-2 text-sm font-semibold">Covers requirements</legend>
-            {fe("requirementIds") && (
-              <p className="text-warn text-[13px]">{fe("requirementIds")}</p>
-            )}
+            {fe("requirementIds") && <FieldError>{fe("requirementIds")}</FieldError>}
             <div className="border-line max-h-40 overflow-y-auto rounded-lg border p-2">
               {requirements.map((r) => (
                 <label key={r.id} className="flex min-h-11 items-start gap-2 py-1 text-sm">
@@ -229,7 +257,7 @@ export function TestCaseDialog({
 
           <fieldset className="flex flex-col gap-2">
             <legend className="text-ink-2 text-sm font-semibold">Steps</legend>
-            {fe("steps") && <p className="text-warn text-[13px]">{fe("steps")}</p>}
+            {fe("steps") && <FieldError>{fe("steps")}</FieldError>}
             <ol className="flex flex-col gap-2">
               {steps.map((s, i) => (
                 <li key={i} className="flex gap-2">
@@ -303,7 +331,7 @@ export function TestCaseDialog({
               Use placeholders like {"{{STANDARD_USER}}"} for accounts — real credentials are kept
               safely per environment. If nothing is needed, enter “none”.
             </p>
-            {fe("testData") && <p className="text-warn text-[13px]">{fe("testData")}</p>}
+            {fe("testData") && <FieldError>{fe("testData")}</FieldError>}
             {testData.map((d, i) => (
               <div key={i} className="flex gap-2">
                 <label htmlFor={`td-name-${i}`} className="sr-only">
@@ -427,7 +455,10 @@ export function TestCaseDialog({
             />
           </Field>
 
-          <div className="border-line-soft flex flex-wrap gap-2 border-t pt-4">
+          <div className="border-line-soft flex flex-wrap items-center gap-2 border-t pt-4">
+            {badFields.length > 0 && (
+              <p className="text-warn w-full text-[13px]">Please check: {badFields.join(", ")}.</p>
+            )}
             <Button type="submit" disabled={pending}>
               {pending ? "Saving…" : testCase ? "Save changes" : "Add test case"}
             </Button>

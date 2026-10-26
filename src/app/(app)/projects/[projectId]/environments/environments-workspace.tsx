@@ -83,6 +83,7 @@ export function EnvironmentsWorkspace({
               setMessage({ tone, text });
               router.refresh();
             }}
+            onCheckStart={() => setMessage(null)}
           />
         ))
       )}
@@ -107,6 +108,7 @@ function EnvironmentCard({
   canCheck,
   onEdit,
   onMessage,
+  onCheckStart,
 }: {
   env: EnvironmentItem;
   projectId: string | null;
@@ -115,6 +117,8 @@ function EnvironmentCard({
   canCheck: boolean;
   onEdit: () => void;
   onMessage: (tone: "error" | "success", text: string) => void;
+  /** A new check makes earlier notes ("run the check again") out of date. */
+  onCheckStart: () => void;
 }) {
   const router = useRouter();
   const [job, setJob] = useState<JobItem | null>(null);
@@ -131,6 +135,7 @@ function EnvironmentCard({
 
   async function check() {
     if (!projectId) return;
+    onCheckStart();
     try {
       const res = await api<{ job: JobItem }>(
         `/api/projects/${projectId}/environments/${env.id}/verify`,

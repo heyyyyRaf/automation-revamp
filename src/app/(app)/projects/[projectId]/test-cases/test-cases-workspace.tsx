@@ -329,7 +329,7 @@ export function TestCasesWorkspace({
         <div className="flex flex-wrap items-start gap-6">
           <section
             aria-label="Test case list"
-            className="rounded-card border-line min-w-0 flex-[999_1_560px] overflow-x-auto border bg-white"
+            className="rounded-card border-line relative min-w-0 flex-[999_1_560px] overflow-x-auto border bg-white"
           >
             <table className="w-full min-w-[640px] border-collapse text-sm">
               <thead>
@@ -350,7 +350,9 @@ export function TestCasesWorkspace({
                       selected?.id === t.id ? "bg-[#F5F8FF]" : "bg-white",
                     )}
                   >
-                    <td className="text-ink-2 px-4 py-3.5 font-mono text-[13px]">{t.key}</td>
+                    <td className="text-ink-2 px-4 py-3.5 font-mono text-[13px] whitespace-nowrap">
+                      {t.key}
+                    </td>
                     <td className="px-2 py-3.5">
                       <button
                         type="button"
@@ -365,7 +367,14 @@ export function TestCasesWorkspace({
                       <TypeBadge tc={t} />
                     </td>
                     <td className="text-muted px-2 py-3.5 font-mono text-[13px]">
-                      {t.requirements.map((r) => r.key).join(", ") || "—"}
+                      {t.requirements.length === 0
+                        ? "—"
+                        : t.requirements.map((r, i) => (
+                            <span key={r.id} className="whitespace-nowrap">
+                              {r.key}
+                              {i < t.requirements.length - 1 ? ", " : ""}
+                            </span>
+                          ))}
                     </td>
                     <td className="px-4 py-3.5">
                       <StatusDot
@@ -494,7 +503,7 @@ function CaseDetail({
   return (
     <aside
       aria-label="Selected test case"
-      className="rounded-card border-line flex flex-[1_1_340px] flex-col gap-4 border bg-white p-[22px]"
+      className="rounded-card border-line flex min-w-0 flex-[1_1_340px] flex-col gap-4 border bg-white p-[22px]"
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-muted font-mono text-[13px]">
@@ -849,6 +858,7 @@ function Comments({
           <Textarea
             id={`comment-${testCaseId}`}
             name="body"
+            required
             maxLength={4000}
             className="min-h-16"
             placeholder="Add a comment for the team"

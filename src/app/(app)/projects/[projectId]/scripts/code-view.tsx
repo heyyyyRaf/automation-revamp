@@ -41,7 +41,7 @@ function tokenize(line: string): Token[] {
 export function CodeView({ code, flagged }: { code: string; flagged: Set<number> }) {
   const lines = code.replace(/\n$/, "").split("\n");
   return (
-    <div className="overflow-x-auto py-3.5 font-mono text-[13px] leading-[1.75]">
+    <div className="relative overflow-x-auto py-3.5 font-mono text-[13px] leading-[1.75]">
       {lines.map((line, i) => (
         <div
           key={i}

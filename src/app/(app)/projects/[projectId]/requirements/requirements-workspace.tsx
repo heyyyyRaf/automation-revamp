@@ -209,7 +209,9 @@ export function RequirementsWorkspace({
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-ink-2 font-mono text-[13px]">{r.key}</span>
+                      <span className="text-ink-2 font-mono text-[13px] whitespace-nowrap">
+                        {r.key}
+                      </span>
                       <Badge>{REQUIREMENT_TYPE_LABELS[r.type] ?? r.type}</Badge>
                       {r.status === "NEEDS_REVIEW" && <Badge tone="warning">Needs review</Badge>}
                       {r.origin === "MANUAL" && <Badge tone="info">Added by tester</Badge>}
@@ -277,7 +279,7 @@ export function RequirementsWorkspace({
         <FlowsPanel projectId={projectId} initialFlows={initialFlows} canWrite={canWrite} />
       </section>
 
-      <aside className="flex flex-[1_1_320px] flex-col gap-4">
+      <aside className="flex min-w-0 flex-[1_1_320px] flex-col gap-4">
         <Card className="flex flex-col gap-3.5 p-5">
           <h2 className="text-[17px] font-bold">Write test cases</h2>
           <p className="text-muted text-[13px] leading-normal">

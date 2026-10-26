@@ -449,16 +449,68 @@ async function login(input: RunnerInput): Promise<void> {
   if (!acct) throw new Error("The selected test account is missing.");
   await withPage(input, async (page) => {
     let shot: string | null = null;
+    // Each stage fails with a sentence a tester can act on, not a Playwright error.
+    const stage = async (problem: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch {
+        throw new Error(problem);
+      }
+    };
+    /** Still on the sign-in form? Then the credentials (or the form) are the problem. */
+    const stillOnForm = async () => {
+      const alert = await page
+        .getByRole("alert")
+        .first()
+        .innerText({ timeout: 1000 })
+        .catch(() => "");
+      const formShown = await page
+        .getByLabel(cfg.passwordLabel)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      if (!formShown && !alert) return null;
+      const said = alert.trim() ? ` The app said: "${alert.trim().slice(0, 200)}".` : "";
+      return `Still on the sign-in page after signing in — check the test account's username and password.${said}`;
+    };
     try {
-      await page.goto(cfg.path, { waitUntil: "domcontentloaded" });
-      await page.getByLabel(cfg.usernameLabel, { exact: false }).first().fill(acct.username);
-      await page.getByLabel(cfg.passwordLabel, { exact: false }).first().fill(acct.password);
-      await page.getByRole("button", { name: cfg.submitLabel }).first().click();
+      await stage(`Couldn't open the sign-in page ${cfg.path}.`, () =>
+        page.goto(cfg.path, { waitUntil: "domcontentloaded" }),
+      );
+      await stage(`Couldn't find a field labelled "${cfg.usernameLabel}" on ${cfg.path}.`, () =>
+        page
+          .getByLabel(cfg.usernameLabel, { exact: false })
+          .first()
+          .fill(acct.username, { timeout: 15_000 }),
+      );
+      await stage(`Couldn't find a field labelled "${cfg.passwordLabel}" on ${cfg.path}.`, () =>
+        page
+          .getByLabel(cfg.passwordLabel, { exact: false })
+          .first()
+          .fill(acct.password, { timeout: 15_000 }),
+      );
+      await stage(`Couldn't find a "${cfg.submitLabel}" button on ${cfg.path}.`, () =>
+        page.getByRole("button", { name: cfg.submitLabel }).first().click({ timeout: 15_000 }),
+      );
       if (cfg.successUrlContains) {
         const part = cfg.successUrlContains;
-        await page.waitForURL((u) => u.href.includes(part), { timeout: 20_000 });
+        try {
+          await page.waitForURL((u) => u.href.includes(part), { timeout: 20_000 });
+        } catch {
+          throw new Error(
+            (await stillOnForm()) ??
+              `After signing in, the address didn't contain "${part}" within 20 seconds.`,
+          );
+        }
       } else if (cfg.successText) {
-        await page.getByText(cfg.successText).first().waitFor({ timeout: 20_000 });
+        try {
+          await page.getByText(cfg.successText).first().waitFor({ timeout: 20_000 });
+        } catch {
+          throw new Error(
+            (await stillOnForm()) ??
+              `After signing in, "${cfg.successText}" didn't appear within 20 seconds.`,
+          );
+        }
       } else {
         await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
         if (
@@ -468,7 +520,9 @@ async function login(input: RunnerInput): Promise<void> {
             .isVisible()
             .catch(() => false)
         ) {
-          throw new Error("The login form is still shown after signing in.");
+          throw new Error(
+            (await stillOnForm()) ?? "The sign-in form is still shown after signing in.",
+          );
         }
       }
       const state = JSON.stringify(await page.context().storageState());

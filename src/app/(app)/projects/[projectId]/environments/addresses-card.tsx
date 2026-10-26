@@ -74,7 +74,7 @@ export function AddressesCard({
   }
 
   return (
-    <Card className="flex flex-[1_1_320px] flex-col gap-4 p-5">
+    <Card className="flex min-w-0 flex-[1_1_320px] flex-col gap-4 p-5">
       <div className="flex flex-col gap-1">
         <h2 className="text-[17px] font-bold">Addresses</h2>
         <p className="text-muted text-[13px] leading-normal">

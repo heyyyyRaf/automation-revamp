@@ -99,6 +99,7 @@ export function ScriptsWorkspace({
       const res = await api<{ script: ScriptDetailItem }>(`${base}/${scriptId}`);
       setDetail(res.script);
       setVersionId(res.script.versions[0]?.id ?? null);
+      return res.script;
     },
     [base],
   );
@@ -161,14 +162,23 @@ export function ScriptsWorkspace({
   async function saveEdit() {
     if (!shownDetail) return;
     try {
-      await api(`${base}/${shownDetail.id}/versions`, { json: { code: draft } });
+      const { version: saved } = await api<{ version: { version: number } }>(
+        `${base}/${shownDetail.id}/versions`,
+        { json: { code: draft } },
+      );
       setEditing(false);
-      setMessage({
-        tone: "success",
-        text: "Saved as a new version. Approve it when you're happy.",
-      });
       await reloadList();
-      await loadDetail(shownDetail.id);
+      const fresh = await loadDetail(shownDetail.id);
+      const checks = fresh.versions[0]?.checks;
+      // Say what the checks found: a version with errors can't be approved yet.
+      setMessage(
+        checks && (!checks.typeCheckOk || !checks.safetyCheckOk)
+          ? {
+              tone: "error",
+              text: `Saved as v${saved.version}, but it has errors — fix them before it can be approved.`,
+            }
+          : { tone: "success", text: `Saved as v${saved.version}. Approve it when you're happy.` },
+      );
     } catch (err) {
       fail(err, "Couldn't save the script.");
     }
@@ -239,7 +249,7 @@ export function ScriptsWorkspace({
           few minutes.
         </Alert>
       )}
-      {job?.status === "SUCCEEDED" && !running_ && job.type === "GENERATE_SCRIPT" && (
+      {!message && job?.status === "SUCCEEDED" && !running_ && job.type === "GENERATE_SCRIPT" && (
         <GenerationResult result={job.result} />
       )}
 
@@ -289,7 +299,9 @@ export function ScriptsWorkspace({
                   aria-hidden
                 />
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="font-mono text-[12.5px] font-medium">{s.key}</span>
+                  <span className="font-mono text-[12.5px] font-medium whitespace-nowrap">
+                    {s.key}
+                  </span>
                   <span className="text-ink-2 truncate text-[13px]">{s.title}</span>
                 </span>
                 <span className={cn("text-[11px] font-semibold", STATE[s.state].dot)}>
@@ -527,6 +539,7 @@ export function ScriptsWorkspace({
           onStarted={(j) => {
             setWriting(false);
             setJob(j);
+            setMessage(null);
             wasActive.current = true;
           }}
         />
@@ -538,6 +551,7 @@ export function ScriptsWorkspace({
           onStarted={(j) => {
             setFixing(false);
             setJob(j);
+            setMessage(null);
             wasActive.current = true;
           }}
         />

@@ -14,6 +14,18 @@ import type {
 
 const STEP_CATEGORIES = new Set(["pw:api", "expect", "test.step"]);
 
+/**
+ * Steps a tester should see: actions and checks from the script. Skips fixture setup (located
+ * inside Playwright) and the harness's own live-view screenshots, which aren't test actions.
+ */
+function isScriptStep(step: TestStep): boolean {
+  if (!STEP_CATEGORIES.has(step.category)) return false;
+  if (step.category !== "pw:api") return true;
+  const file = (step.location?.file ?? "").replaceAll("\\", "/");
+  if (!file || file.includes("node_modules")) return false;
+  return !(file.endsWith("/tests/traxion.ts") && /^Screenshot\b/i.test(step.title));
+}
+
 function emit(event: Record<string, unknown>): void {
   process.stdout.write(`${JSON.stringify(event)}\n`);
 }
@@ -40,9 +52,7 @@ export default class TraxionReporter implements Reporter {
   }
 
   onStepBegin(test: TestCase, _result: TestResult, step: TestStep): void {
-    if (!STEP_CATEGORIES.has(step.category)) return;
-    const file = step.location?.file ?? "";
-    if (step.category === "pw:api" && (!file || file.includes("node_modules"))) return;
+    if (!isScriptStep(step)) return;
     emit({
       t: "step-begin",
       id: idOf(test),
@@ -52,11 +62,7 @@ export default class TraxionReporter implements Reporter {
   }
 
   onStepEnd(test: TestCase, _result: TestResult, step: TestStep): void {
-    if (!STEP_CATEGORIES.has(step.category)) return;
-    // Only actions from the script (or the harness wrapping it) — skip fixture setup such as
-    // "Launch browser", whose location is inside Playwright itself or missing.
-    const file = step.location?.file ?? "";
-    if (step.category === "pw:api" && (!file || file.includes("node_modules"))) return;
+    if (!isScriptStep(step)) return;
     emit({
       t: "step-end",
       id: idOf(test),

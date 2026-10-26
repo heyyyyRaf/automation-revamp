@@ -32,11 +32,14 @@ export default async function ProjectsPage({
   const projects = await listProjects(auth, { includeArchived: showArchived });
 
   // Sidebar "Test cases / Test scripts / Runs and reports" outside a project: open that module
-  // in the last project you used (if you still have access), or in your only project.
+  // in the last project you used (if you still have access), else your most recently active one.
   if (pick && PICK_LABEL[pick]) {
     const last = (await cookies()).get(LAST_PROJECT_COOKIE)?.value;
-    const target =
-      projects.find((p) => p.id === last) ?? (projects.length === 1 ? projects[0] : undefined);
+    const active = projects.filter((p) => p.status === "ACTIVE");
+    const latest = [...(active.length ? active : projects)].sort(
+      (a, b) => b.activity.at.getTime() - a.activity.at.getTime(),
+    )[0];
+    const target = projects.find((p) => p.id === last) ?? latest;
     if (target) redirect(`/projects/${target.id}/${pick}`);
   }
   const stats = await dashboardStats(auth, projects);
@@ -104,7 +107,7 @@ export default async function ProjectsPage({
         </div>
       }
       aside={
-        <Card className="flex flex-[1_1_300px] flex-col gap-[18px] p-6">
+        <Card className="flex min-w-0 flex-[1_1_300px] flex-col gap-[18px] p-6">
           <h2 className="text-[17px] font-bold">New here? Three steps</h2>
           {[
             ["Upload the requirements", "FRD, user stories, Figma screenshots or flow diagrams."],

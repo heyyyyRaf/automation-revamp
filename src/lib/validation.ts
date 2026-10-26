@@ -2,6 +2,35 @@ import { z } from "zod";
 import { DOCUMENT_TAGS, PRIORITIES, REQUIREMENT_TYPES, TEST_CASE_TYPES } from "@/lib/domain";
 import { ROLES } from "@/lib/permissions";
 
+/**
+ * Plain-language defaults for rules without their own message, so users never see validator
+ * jargon such as "Too small: expected number to be >=1000". Rules with a message keep it.
+ */
+z.config({
+  customError: (issue) => {
+    const n = (v: unknown) => (typeof v === "number" ? v.toLocaleString("en-US") : String(v));
+    if (issue.code === "too_small") {
+      if (issue.origin === "number") return `Use ${n(issue.minimum)} or more.`;
+      if (issue.origin === "string")
+        return issue.minimum === 1
+          ? "This can't be empty."
+          : `Use at least ${n(issue.minimum)} characters.`;
+      if (issue.origin === "array") return `Choose at least ${n(issue.minimum)}.`;
+    }
+    if (issue.code === "too_big") {
+      if (issue.origin === "number") return `Use ${n(issue.maximum)} or less.`;
+      if (issue.origin === "string") return `Use at most ${n(issue.maximum)} characters.`;
+      if (issue.origin === "array") return `Choose at most ${n(issue.maximum)}.`;
+    }
+    if (issue.code === "invalid_type") {
+      return issue.input === undefined ? "This is required." : "This value isn't valid.";
+    }
+    if (issue.code === "invalid_value") return "Choose one of the options.";
+    if (issue.code === "invalid_format") return "This doesn't look right.";
+    return undefined;
+  },
+});
+
 const trimmed = (min: number, max: number, label: string) =>
   z
     .string()

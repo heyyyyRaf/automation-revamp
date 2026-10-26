@@ -140,7 +140,7 @@ export function AuditViewer({
       {entries.length === 0 ? (
         <EmptyState title="Nothing logged" description="No entry matches these filters." />
       ) : (
-        <div className="border-line rounded-card overflow-x-auto border bg-white">
+        <div className="border-line rounded-card relative overflow-x-auto border bg-white">
           <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
               <tr className="text-muted text-left text-xs tracking-[0.04em] uppercase">

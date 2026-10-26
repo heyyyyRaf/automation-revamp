@@ -59,7 +59,7 @@ export function RunsList({
           description="Approve test cases and their scripts, verify an environment, then run them and watch live."
         />
       ) : (
-        <div className="border-line rounded-card overflow-x-auto border bg-white">
+        <div className="border-line rounded-card relative overflow-x-auto border bg-white">
           <table className="w-full min-w-[640px] border-collapse text-sm">
             <thead>
               <tr className="text-muted text-left text-xs tracking-[0.04em] uppercase">

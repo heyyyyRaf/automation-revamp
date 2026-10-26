@@ -62,7 +62,10 @@ export function AssistantPanel({
   filesReading: number;
 }) {
   return (
-    <section aria-labelledby="found-heading" className="flex flex-[1_1_340px] flex-col gap-4">
+    <section
+      aria-labelledby="found-heading"
+      className="flex min-w-0 flex-[1_1_340px] flex-col gap-4"
+    >
       <h2 id="found-heading" className="text-[19px] font-bold">
         2. What the assistant found
       </h2>

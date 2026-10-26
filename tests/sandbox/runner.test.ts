@@ -118,6 +118,37 @@ describe("login", () => {
     const events = await login(wrong);
     expect(events.find((e) => e.t === "login")).toMatchObject({ ok: false });
     expect(JSON.stringify(events)).not.toContain(wrong);
+    // A sentence a tester can act on, quoting what the app showed — not a Playwright error.
+    const result = events.find((e) => e.t === "login");
+    const error = result?.t === "login" ? (result.error ?? "") : "";
+    expect(error).toContain("check the test account's username and password");
+    expect(error).toContain('The app said: "Invalid email or password"');
+    expect(error).not.toMatch(/locator|Timeout \d+ms/);
+  });
+
+  it("names the missing field when the sign-in form doesn't match", async () => {
+    const events = await collect({
+      sessionId: "login-test-labels",
+      label: "test",
+      origins: origins(),
+      input: {
+        ...base(),
+        mode: "login",
+        login: {
+          path: "/login",
+          usernameLabel: "Username",
+          passwordLabel: "Password",
+          submitLabel: "Sign in",
+          successText: "Welcome back",
+          account: "Standard user",
+        },
+      },
+      timeoutMs: 60_000,
+    });
+    const result = events.find((e) => e.t === "login");
+    expect(result?.t === "login" && result.error).toBe(
+      'Couldn\'t find a field labelled "Username" on /login.',
+    );
   });
 });
 
@@ -173,6 +204,8 @@ test("TC-002 sign in", async ({ page }) => {
     expect(steps.some((s) => s.t === "step-end" && s.category === "pw:api")).toBe(true);
     // Fixture setup steps are not shown as user actions.
     expect(steps.some((s) => s.t === "step-end" && s.title === "Launch browser")).toBe(false);
+    // Neither are the live view's own frame captures — but the frames still arrive.
+    expect(steps.some((s) => s.t === "step-end" && /^Screenshot/.test(s.title))).toBe(false);
     expect(events.some((e) => e.t === "frame")).toBe(true);
     const traces = events.filter((e) => e.t === "artifact" && e.kind === "trace");
     expect(new Set(traces.map((t) => (t.t === "artifact" ? t.id : "")))).toEqual(

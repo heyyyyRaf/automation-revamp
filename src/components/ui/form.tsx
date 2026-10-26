@@ -40,11 +40,26 @@ export function Field({
       </label>
       {children}
       {hint && !error && <p className="text-muted text-[13px]">{hint}</p>}
-      {error && (
-        <p className="text-warn text-[13px]" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <FieldError>{error}</FieldError>}
     </div>
   );
+}
+
+/** An inline field error. Marked so `scrollToFirstError` can bring it into view. */
+export function FieldError({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-warn text-[13px]" role="alert" data-field-error="">
+      {children}
+    </p>
+  );
+}
+
+/**
+ * After a save is refused, bring the first field error into view: in a long dialog it may be
+ * far above the button that was clicked. Call it once React has rendered the errors.
+ */
+export function scrollToFirstError(root: HTMLElement | null) {
+  requestAnimationFrame(() => {
+    root?.querySelector("[data-field-error]")?.scrollIntoView({ block: "center" });
+  });
 }
